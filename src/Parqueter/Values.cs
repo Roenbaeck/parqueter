@@ -7,6 +7,20 @@ public sealed class ParseOptions
     /// <summary>Culture for numbers (and for date formats given in the schema). ISO dates always use the invariant culture.</summary>
     public CultureInfo Culture { get; init; } = CultureInfo.InvariantCulture;
 
+    /// <summary>
+    /// Number formatting of <see cref="Culture"/>, except that the minus sign is always the ordinary '-'.
+    /// Some cultures (sv-SE for one) use the Unicode minus U+2212, which no data file ever contains.
+    /// </summary>
+    public NumberFormatInfo Numbers => _numbers ??= MakeNumbers();
+    NumberFormatInfo? _numbers;
+
+    NumberFormatInfo MakeNumbers()
+    {
+        var n = (NumberFormatInfo)Culture.NumberFormat.Clone();
+        n.NegativeSign = "-";
+        return n;
+    }
+
     /// <summary>Text values that mean null, in addition to the empty string.</summary>
     public IReadOnlySet<string> NullTokens { get; init; } = new HashSet<string>();
 
@@ -67,16 +81,16 @@ public static class Values
                 throw Bad(s, "a boolean (true/false/1/0)");
 
             case ColumnType.Int32:
-                if (int.TryParse(s, IntegerStyle, o.Culture, out var i32)) return i32;
+                if (int.TryParse(s, IntegerStyle, o.Numbers, out var i32)) return i32;
                 throw Bad(s, "a 32-bit integer");
 
             case ColumnType.Int64:
-                if (long.TryParse(s, IntegerStyle, o.Culture, out var i64)) return i64;
+                if (long.TryParse(s, IntegerStyle, o.Numbers, out var i64)) return i64;
                 throw Bad(s, "a 64-bit integer");
 
             case ColumnType.Decimal:
             {
-                if (!decimal.TryParse(s, DecimalStyle, o.Culture, out var d)) throw Bad(s, "a decimal number");
+                if (!decimal.TryParse(s, DecimalStyle, o.Numbers, out var d)) throw Bad(s, "a decimal number");
                 var precision = c.Precision ?? 38;
                 var scale = c.Scale ?? 0;
                 if (decimal.Round(d, scale) != d) throw new FormatException($"'{s}' has more than {scale} decimals");
@@ -85,7 +99,7 @@ public static class Values
             }
 
             case ColumnType.Double:
-                if (double.TryParse(s, NumberStyles.Float, o.Culture, out var dbl)) return dbl;
+                if (double.TryParse(s, NumberStyles.Float, o.Numbers, out var dbl)) return dbl;
                 throw Bad(s, "a floating point number");
 
             case ColumnType.Date:

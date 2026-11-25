@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Parqueter;
 
@@ -65,7 +66,12 @@ static class Cli
         csv options:
           --schema <file>          Use this schema (JSON) instead of inferring one.
           --write-schema <file>    Save the schema that is used, so it can be reviewed and edited.
-          --delimiter <c>          Field delimiter: a single character, or "tab". Default ,
+          --delimiter <text>       What separates fields. Default ,  Can be a character, a word (tab, comma,
+                                   semicolon, pipe), a character code (0x1F, \x1F, U+001F) or several
+                                   characters such as ^;
+          --quote <c|none>         The quote character (default "), or none if fields are never quoted.
+          --row-delimiter <text>   What ends a row: crlf, lf, cr or any text. By default any line break does.
+                                   Give it when text fields contain line breaks: only this exact text ends a row.
           --no-header              The first row is data; columns are named column1, column2, ...
           --encoding <name>        Text encoding, e.g. utf-8 (default), windows-1252, iso-8859-1.
           --culture <name>         Culture for numbers, e.g. sv-SE where 12,5 is a decimal. Default invariant.
@@ -116,7 +122,7 @@ static class Cli
 
     static async Task<int> CsvAsync(Args a)
     {
-        a.AllowOnly("schema", "write-schema", "delimiter", "no-header", "encoding", "culture", "null",
+        a.AllowOnly("schema", "write-schema", "delimiter", "quote", "row-delimiter", "no-header", "encoding", "culture", "null",
                     "keep-empty-strings", "row-group-size", "force");
         if (a.Positional.Count != 2) throw new CliException("Usage: parqueter csv <input.csv> <output.parquet> [options]", 2);
         var input = a.Positional[0];
@@ -128,6 +134,8 @@ static class Cli
         var options = new CsvOptions
         {
             Delimiter = ParseDelimiter(a.Get("delimiter")),
+            Quote = ParseQuote(a.Get("quote")),
+            RowDelimiter = ParseRowDelimiter(a.Get("row-delimiter")),
             HasHeader = !a.Has("no-header"),
             Encoding = ParseEncoding(a.Get("encoding")),
             Parse = new ParseOptions
@@ -194,12 +202,41 @@ static class Cli
     static int ParseInt(string text, string option) =>
         int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var v) ? v : throw new CliException($"{option} needs a number, not '{text}'.", 2);
 
-    static char ParseDelimiter(string? text) => text switch
+    static readonly Regex CharCode = new(@"^(?:0x|\\x|U\+)([0-9A-Fa-f]{1,4})$", RegexOptions.Compiled);
+
+    static string ParseDelimiter(string? text)
     {
-        null => ',',
-        "tab" or "\\t" => '\t',
+        if (string.IsNullOrEmpty(text)) return text is null ? "," : throw new CliException("--delimiter cannot be empty.", 2);
+        switch (text.ToLowerInvariant())
+        {
+            case "tab": case "\\t": return "\t";
+            case "comma": return ",";
+            case "semicolon": return ";";
+            case "pipe": return "|";
+        }
+        var code = CharCode.Match(text);
+        if (code.Success) return ((char)Convert.ToInt32(code.Groups[1].Value, 16)).ToString();
+        return text; // one or more literal characters
+    }
+
+    static string? ParseRowDelimiter(string? text)
+    {
+        if (text is null) return null;
+        return text.ToLowerInvariant() switch
+        {
+            "crlf" or "\\r\\n" => "\r\n",
+            "lf" or "\\n" => "\n",
+            "cr" or "\\r" => "\r",
+            _ => ParseDelimiter(text),
+        };
+    }
+
+    static char? ParseQuote(string? text) => text switch
+    {
+        null => '"',
+        "none" => null,
         { Length: 1 } => text[0],
-        _ => throw new CliException($"--delimiter must be one character or 'tab', not '{text}'.", 2),
+        _ => throw new CliException($"--quote must be one character or 'none', not '{text}'.", 2),
     };
 
     static Encoding ParseEncoding(string? name)

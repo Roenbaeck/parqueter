@@ -94,4 +94,85 @@ Assert-Match $i.Text '(?m)^\s+Belopp\s+decimal\(38,1\)\s+optional' 'Belopp is a 
 Assert-Match $i.Text "${Aring}ke \| 12\.5 \| 2026-01-02" 'windows-1252 letters and the decimal comma are read'
 Assert-Match $i.Text "Bj${ouml}rn \| NULL \| 2026-01-03" 'the NULL token is a null'
 
+# --- 5. SSIS style files: UTF-16, control character delimiter, no quoting ----
+Write-Host 'UTF-16, delimiter 0x1F, --quote none'
+$us = [string][char]0x1F
+$ssis = @(
+    "AR${us}NAME${us}AMOUNT${us}CREATED"
+    "2026${us}`"Quoted`" text${us}12,5${us}2026-01-02 10:00:00"
+    "2026${us}Plain, with; punctuation${us},25${us}2026-01-03 11:30:00"
+    "2025${us}${Aring}ke${us}${us}2026-01-04 00:00:00"
+)
+$utf16 = New-Object Text.UnicodeEncoding $false, $true   # little endian, with byte order mark
+$ssisFile = Join-Path $work 'ssis.csv'
+[IO.File]::WriteAllText($ssisFile, ($ssis -join "`n") + "`n", $utf16)
+$ssisOut = Join-Path $work 'ssis.parquet'
+$r = Invoke-Parqueter csv $ssisFile $ssisOut --delimiter 0x1F --quote none --culture sv-SE
+Assert-True ($r.ExitCode -eq 0) 'a UTF-16 file with a 0x1F delimiter converts'
+if ($r.ExitCode -ne 0) { Write-Host $r.Text }
+$i = Invoke-Parqueter inspect $ssisOut
+Assert-Match $i.Text '(?m)^\s+AR\s+int32\s+required' 'AR is an int32'
+Assert-Match $i.Text '(?m)^\s+AMOUNT\s+decimal\(38,2\)\s+optional' 'AMOUNT is a nullable decimal(38,2)'
+Assert-Match $i.Text '"Quoted" text \| 12\.50?' 'a quote at the start of a field is plain text with --quote none'
+Assert-Match $i.Text 'Plain, with; punctuation \| 0\.25' 'commas and semicolons in text are kept; ,25 is 0.25'
+Assert-Match $i.Text ('{0}ke \| NULL \| 2026-01-04' -f $Aring) 'an empty amount is NULL'
+# Without --quote none the leading quote is taken as CSV quoting and silently dropped: the reason the option exists.
+$quoted = Join-Path $work 'ssis-quoted.parquet'
+$r = Invoke-Parqueter csv $ssisFile $quoted --delimiter 0x1F --culture sv-SE
+Assert-True ($r.ExitCode -eq 0) 'the default quote handling still converts the file'
+$i = Invoke-Parqueter inspect $quoted
+Assert-Match $i.Text '\| Quoted text \|' 'by default the quotes are removed (CSV rules), which --quote none avoids'
+
+Write-Host 'Two-character delimiter ^;'
+$caret = Join-Path $work 'caret.csv'
+$rows = @('Id^;Name^;Note')
+$rows += 1..20000 | ForEach-Object { "$_^;name_$_ a^b^;note $_" }   # a^b: a caret that is not part of the delimiter
+[IO.File]::WriteAllText($caret, ($rows -join "`n") + "`n", $utf16)
+$caretOut = Join-Path $work 'caret.parquet'
+$r = Invoke-Parqueter csv $caret $caretOut --delimiter '^;' --quote none
+Assert-True ($r.ExitCode -eq 0) 'a file with the delimiter ^; converts (the delimiter crosses buffer boundaries)'
+if ($r.ExitCode -ne 0) { Write-Host $r.Text }
+$s = Invoke-Parqueter inspect $caretOut --rows 1 --stats
+Assert-Match $s.Text 'rows: 20000' 'all 20000 rows are read'
+Assert-Match $s.Text '(?m)^\s+Id\s+nulls=0 min=1 max=20000 sum=200010000$' 'no row was shifted or merged'
+Assert-Match $s.Text '1 \| name_1 a\^b \| note 1' 'a caret that is not followed by ; stays in the text'
+
+Write-Host 'Row delimiter CRLF with a bare LF inside a text field'
+$rd = Join-Path $work 'rowdelim.csv'
+$rdText = "Id${us}Note${us}Amount`r`n1${us}first line`nsecond line${us}1,5`r`n2${us}plain${us}2,5`r`n"
+[IO.File]::WriteAllText($rd, $rdText, $utf16)
+$rdOut = Join-Path $work 'rowdelim.parquet'
+$r = Invoke-Parqueter csv $rd $rdOut --delimiter 0x1F --quote none --culture sv-SE
+Assert-True ($r.ExitCode -ne 0) 'by default the embedded line break splits the record, and the field count mismatch is reported'
+Assert-Match $r.Text 'expected 3 fields but found 2' 'the error says what is wrong'
+$r = Invoke-Parqueter csv $rd $rdOut --delimiter 0x1F --quote none --culture sv-SE --row-delimiter crlf --force
+Assert-True ($r.ExitCode -eq 0) '--row-delimiter crlf keeps the embedded line break as data'
+$s = Invoke-Parqueter inspect $rdOut --rows 0 --stats
+Assert-Match $s.Text 'rows: 2' 'two rows'
+Assert-Match $s.Text '(?m)^\s+Amount\s+nulls=0 min=1\.5\d* max=2\.5\d* sum=4\.0\d*$' 'the amounts are read from the right fields'
+$j = Invoke-Parqueter inspect $rdOut --rows 2
+Assert-Match $j.Text 'first line' 'the text before the line break is in the field'
+Assert-Match $j.Text 'second line' 'and the text after it too'
+
+Write-Host 'Negative numbers with a Swedish culture'
+$neg = Join-Path $work 'neg.csv'
+[IO.File]::WriteAllText($neg, "Namn;Belopp;Antal`nA;-1,5;-3`nB;2,25;4`n", (New-Object Text.UTF8Encoding $false))
+$negOut = Join-Path $work 'neg.parquet'
+$r = Invoke-Parqueter csv $neg $negOut --delimiter ';' --culture sv-SE
+Assert-True ($r.ExitCode -eq 0) 'negative numbers with sv-SE convert'
+$s = Invoke-Parqueter inspect $negOut --rows 0 --stats
+Assert-Match $s.Text '(?m)^\s+Belopp\s+nulls=0 min=-1\.5\d* max=2\.25\d* sum=0\.75\d*$' 'an ordinary minus sign is a negative decimal, not text'
+Assert-Match $s.Text '(?m)^\s+Antal\s+nulls=0 min=-3 max=4 sum=1$' 'an ordinary minus sign is a negative integer'
+
+Write-Host 'No header'
+$nh = Join-Path $work 'noheader.csv'
+[IO.File]::WriteAllText($nh, "FC1;X1;2026;10;5.00000000`nFC1;X2;2026;11;6.50000000`n", (New-Object Text.UTF8Encoding $true))
+$nhOut = Join-Path $work 'noheader.parquet'
+$r = Invoke-Parqueter csv $nh $nhOut --delimiter ';' --no-header
+Assert-True ($r.ExitCode -eq 0) 'a file without a header converts'
+$i = Invoke-Parqueter inspect $nhOut
+Assert-Match $i.Text 'rows: 2' 'both lines are data'
+Assert-Match $i.Text '(?m)^\s+column1\s+string\s+required' 'columns are named column1, column2, ...'
+Assert-Match $i.Text '(?m)^\s+column5\s+decimal\(38,8\)\s+required' 'a dot decimal is read with the invariant culture'
+
 Complete-Tests

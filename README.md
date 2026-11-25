@@ -33,9 +33,25 @@ parqueter --version
 `--stats` the null count, minimum, maximum and sum of every column (read one row group at a time, so it works on
 files far larger than memory). Compare those numbers with a `SELECT COUNT(*), SUM(...), MIN(...), MAX(...)` on the source.
 
-`csv` options: `--schema`, `--write-schema`, `--delimiter` (`;`, `tab`), `--no-header`, `--encoding`
+`csv` options: `--schema`, `--write-schema`, `--delimiter`, `--quote`, `--row-delimiter`, `--no-header`, `--encoding`
 (`windows-1252`), `--culture` (`sv-SE`), `--null <text>` (repeatable), `--keep-empty-strings`,
 `--row-group-size`, `--force`. Run `parqueter --help` for details.
+
+* `--delimiter` is a character, a word (`tab`, `comma`, `semicolon`, `pipe`), a character code (`0x1F`, `\x1F`, `U+001F`)
+  or several characters (`^;`). A byte order mark is detected, so UTF-8 and UTF-16 files need no `--encoding`.
+* `--quote none` for files that never quote their fields (SSIS without a text qualifier). Otherwise a field that
+  starts with `"` is read as quoted and the quotes are dropped.
+* `--row-delimiter crlf` when text fields contain line breaks. Only that exact text ends a row and any other
+  line break is data, which is how SSIS reads a flat file. Without it, such a record is split and parqueter stops
+  with `expected N fields but found M` and the line number.
+* With a culture such as `sv-SE`, an ordinary `-` is still the minus sign.
+
+Example, an SSIS flat file (UTF-16, delimiter `0x1F`, rows end with CRLF, Swedish decimals):
+
+```powershell
+parqueter csv huvudbok.csv huvudbok.parquet --delimiter 0x1F --quote none --row-delimiter crlf --culture sv-SE
+parqueter inspect huvudbok.parquet --rows 0 --stats
+```
 
 Without `--schema` the types are inferred from the whole file. Review what was decided with
 `--write-schema schema.json`, edit it, and pass it back with `--schema schema.json`.

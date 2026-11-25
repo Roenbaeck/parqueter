@@ -5,7 +5,19 @@ namespace Parqueter;
 
 public sealed class CsvOptions
 {
-    public char Delimiter { get; init; } = ',';
+    /// <summary>The text between fields: usually one character, but may be several (such as "^;").</summary>
+    public string Delimiter { get; init; } = ",";
+
+    /// <summary>The quote character, or null if fields are never quoted (what SSIS writes without a text qualifier).</summary>
+    public char? Quote { get; init; } = '"';
+
+    /// <summary>
+    /// What ends a row. Null means any of LF, CRLF or CR. If given (for example "\r\n"), a record ends only at exactly
+    /// that text, and any other line break is part of the data: this is how SSIS reads a flat file whose text fields
+    /// contain line breaks.
+    /// </summary>
+    public string? RowDelimiter { get; init; }
+
     public bool HasHeader { get; init; } = true;
     public Encoding Encoding { get; init; } = new UTF8Encoding(false);
     public required ParseOptions Parse { get; init; }
@@ -15,15 +27,45 @@ public sealed class CsvOptions
 sealed class CsvParser
 {
     readonly TextReader _reader;
-    readonly char _delimiter;
+    readonly string _delimiter;
+    readonly string? _rowDelimiter; // null: LF, CRLF or CR
+    readonly int _quote; // -1: no quoting
     readonly char[] _buffer = new char[64 * 1024];
     int _pos, _len;
     long _line = 1;
 
-    public CsvParser(TextReader reader, char delimiter)
+    public CsvParser(TextReader reader, string delimiter, char? quote, string? rowDelimiter = null)
     {
         _reader = reader;
         _delimiter = delimiter;
+        _quote = quote ?? -1;
+        _rowDelimiter = rowDelimiter;
+    }
+
+    /// <summary>The first character of <paramref name="text"/> has just been read: does the rest of it follow?</summary>
+    bool MatchRestOf(string text)
+    {
+        var need = text.Length - 1;
+        if (need == 0) return true;
+        if (_len - _pos < need)
+        {
+            // Move what is left to the front of the buffer and read more, so the look-ahead never loses characters.
+            var remaining = _len - _pos;
+            Array.Copy(_buffer, _pos, _buffer, 0, remaining);
+            _pos = 0;
+            _len = remaining;
+            while (_len < need)
+            {
+                var n = _reader.Read(_buffer, _len, _buffer.Length - _len);
+                if (n <= 0) break;
+                _len += n;
+            }
+            if (_len < need) return false;
+        }
+        for (var i = 0; i < need; i++)
+            if (_buffer[_pos + i] != text[i + 1]) return false;
+        _pos += need;
+        return true;
     }
 
     /// <summary>The line number (1-based) on which the most recently read record started.</summary>
@@ -70,9 +112,9 @@ sealed class CsvParser
 
             if (inQuotes)
             {
-                if (c == '"')
+                if (c == _quote)
                 {
-                    if (Peek() == '"') { Next(); field.Append('"'); }
+                    if (Peek() == _quote) { Next(); field.Append((char)_quote); }
                     else inQuotes = false;
                 }
                 else
@@ -83,10 +125,24 @@ sealed class CsvParser
                 continue;
             }
 
-            if (c == '"' && atFieldStart) { inQuotes = true; atFieldStart = false; continue; }
-            if (c == _delimiter) { fields.Add(field.ToString()); field.Clear(); atFieldStart = true; continue; }
-            if (c == '\r') { if (Peek() == '\n') Next(); c = '\n'; }
-            if (c == '\n') { _line++; fields.Add(field.ToString()); return true; }
+            if (c == _quote && atFieldStart) { inQuotes = true; atFieldStart = false; continue; }
+            if (c == _delimiter[0] && MatchRestOf(_delimiter)) { fields.Add(field.ToString()); field.Clear(); atFieldStart = true; continue; }
+
+            if (_rowDelimiter is null)
+            {
+                if (c == '\r') { if (Peek() == '\n') Next(); c = '\n'; }
+                if (c == '\n') { _line++; fields.Add(field.ToString()); return true; }
+            }
+            else if (c == _rowDelimiter[0] && MatchRestOf(_rowDelimiter))
+            {
+                _line += _rowDelimiter.Count(ch => ch == '\n');
+                fields.Add(field.ToString());
+                return true;
+            }
+            else if (c == '\n')
+            {
+                _line++; // a line break that is data, not a row delimiter
+            }
 
             atFieldStart = false;
             field.Append((char)c);
@@ -105,7 +161,7 @@ public static class CsvTable
     public static TableSchema Infer(string path, CsvOptions o)
     {
         using var reader = Open(path, o);
-        var parser = new CsvParser(reader, o.Delimiter);
+        var parser = new CsvParser(reader, o.Delimiter, o.Quote, o.RowDelimiter);
         var fields = new List<string>();
 
         string[]? names = null;
@@ -139,7 +195,7 @@ public static class CsvTable
     public static IEnumerable<object?[]> ReadRows(string path, TableSchema schema, CsvOptions o)
     {
         using var reader = Open(path, o);
-        var parser = new CsvParser(reader, o.Delimiter);
+        var parser = new CsvParser(reader, o.Delimiter, o.Quote, o.RowDelimiter);
         var fields = new List<string>();
         var columns = schema.Columns;
         var first = true;
@@ -228,11 +284,11 @@ public static class CsvTable
                 {
                     const NumberStyles integer = NumberStyles.AllowLeadingSign;
                     const NumberStyles number = NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint;
-                    if (_int32 && !int.TryParse(text, integer, o.Culture, out _)) _int32 = false;
-                    if (_int64 && !long.TryParse(text, integer, o.Culture, out _)) _int64 = false;
+                    if (_int32 && !int.TryParse(text, integer, o.Numbers, out _)) _int32 = false;
+                    if (_int64 && !long.TryParse(text, integer, o.Numbers, out _)) _int64 = false;
                     if (_decimal)
                     {
-                        if (decimal.TryParse(text, number, o.Culture, out var d))
+                        if (decimal.TryParse(text, number, o.Numbers, out var d))
                         {
                             _maxScale = Math.Max(_maxScale, Values.ScaleOf(d));
                             _maxIntegerDigits = Math.Max(_maxIntegerDigits, Values.IntegerDigitsOf(d));
