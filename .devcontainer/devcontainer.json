@@ -2,7 +2,10 @@
 	"name": "parqueter",
 	"image": "mcr.microsoft.com/devcontainers/dotnet:1-8.0-bookworm",
 	"features": {
-		"ghcr.io/devcontainers/features/powershell:1": {}
+		"ghcr.io/devcontainers/features/powershell:1": {},
+		"ghcr.io/devcontainers/features/sshd:1": {
+			"version": "latest"
+		}
 	},
 	"postCreateCommand": "pwsh -NoProfile -Command \"Install-Module PSParquet -Scope CurrentUser -Force\"",
 	"customizations": {
