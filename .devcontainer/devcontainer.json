@@ -1,6 +1,8 @@
 {
 	"name": "parqueter",
-	"image": "mcr.microsoft.com/devcontainers/dotnet:1-8.0-bookworm",
+	"build": {
+		"dockerfile": "Dockerfile"
+	},
 	"features": {
 		"ghcr.io/devcontainers/features/powershell:1": {},
 		"ghcr.io/devcontainers/features/sshd:1": {
