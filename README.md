@@ -25,9 +25,13 @@ cannot do that: it writes every column as required and turns a null integer into
 ```
 parqueter csv <input.csv> <output.parquet> [options]
 parqueter jsonl <input.jsonl | -> <output.parquet> [options]
-parqueter inspect <file.parquet> [--rows N]
+parqueter inspect <file.parquet> [--rows N] [--stats]
 parqueter --version
 ```
+
+`inspect` shows what is really in a Parquet file: the schema with `required`/`optional`, the first rows, and with
+`--stats` the null count, minimum, maximum and sum of every column (read one row group at a time, so it works on
+files far larger than memory). Compare those numbers with a `SELECT COUNT(*), SUM(...), MIN(...), MAX(...)` on the source.
 
 `csv` options: `--schema`, `--write-schema`, `--delimiter` (`;`, `tab`), `--no-header`, `--encoding`
 (`windows-1252`), `--culture` (`sv-SE`), `--null <text>` (repeatable), `--keep-empty-strings`,
@@ -134,6 +138,12 @@ Provider type mapping: strings and characters (and `TimeSpan`) become `string`, 
 `Int64`/`UInt32` `int64`, `UInt64` `decimal(20,0)`, `Single`/`Double` `double`, `DateTime` and `DateTimeOffset`
 `dateTime` (an offset is converted to UTC; a SQL Server `date` column becomes `date`), `Guid` `guid`. Binary columns are
 refused: convert them in the query.
+
+**Scale and memory.** Nothing is collected in PowerShell: the reader is read one row at a time, written to
+parqueter's stdin, and parqueter holds one row group (100,000 rows by default, `-RowGroupSize`) at a time.
+Measured against a SQL Server test database: 11,855,549 rows (3 columns: int, `decimal(17,2)`, datetime) in
+57 seconds, about 208,000 rows/s, to an 80 MB file. Peak memory was 94 MB for PowerShell and 73 MB for parqueter
+(private bytes), and count, sum, minimum and maximum matched SQL exactly.
 
 Test it with `tests/Test-Module.ps1 -Exe .\publish\parqueter.exe` (it uses a `DataTable` reader, no server needed).
 

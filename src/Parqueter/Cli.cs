@@ -12,7 +12,7 @@ sealed class CliException(string message, int exitCode = 1) : Exception(message)
 /// <summary>--name value options (repeatable), --flag switches and positional arguments.</summary>
 sealed class Args
 {
-    static readonly HashSet<string> Flags = new() { "no-header", "keep-empty-strings", "force", "help" };
+    static readonly HashSet<string> Flags = new() { "no-header", "keep-empty-strings", "force", "help", "stats" };
 
     readonly Dictionary<string, List<string>> _options = new();
     readonly HashSet<string> _flags = new();
@@ -56,8 +56,11 @@ static class Cli
         Usage:
           parqueter csv <input.csv> <output.parquet> [options]
           parqueter jsonl <input.jsonl | -> <output.parquet> [options]
-          parqueter inspect <file.parquet> [--rows N]
+          parqueter inspect <file.parquet> [--rows N] [--stats]
           parqueter --version
+
+        inspect shows the schema (with required/optional), the first N rows (default 10, 0 for none) and,
+        with --stats, the null count, minimum, maximum and sum of every column, read one row group at a time.
 
         csv options:
           --schema <file>          Use this schema (JSON) instead of inferring one.
@@ -104,10 +107,10 @@ static class Cli
 
     static async Task<int> InspectAsync(Args a)
     {
-        a.AllowOnly("rows");
-        if (a.Positional.Count != 1) throw new CliException("Usage: parqueter inspect <file.parquet> [--rows N]", 2);
+        a.AllowOnly("rows", "stats");
+        if (a.Positional.Count != 1) throw new CliException("Usage: parqueter inspect <file.parquet> [--rows N] [--stats]", 2);
         var rows = a.Get("rows") is { } r ? ParseInt(r, "--rows") : 10;
-        await ParquetInspect.RunAsync(a.Positional[0], rows, Console.Out);
+        await ParquetInspect.RunAsync(a.Positional[0], rows, a.Has("stats"), Console.Out);
         return 0;
     }
 

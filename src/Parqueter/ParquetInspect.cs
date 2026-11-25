@@ -7,7 +7,35 @@ namespace Parqueter;
 /// <summary>Prints what is really stored in a Parquet file: the schema with nullability, and the first rows.</summary>
 public static class ParquetInspect
 {
-    public static async Task RunAsync(string path, int maxRows, TextWriter output)
+    /// <summary>Per column: how many nulls, and for numbers and dates the minimum, maximum and (numbers) the sum.</summary>
+    sealed class Stat
+    {
+        public long Nulls, Values;
+        public object? Min, Max;
+        public decimal Sum;
+        public double DoubleSum;
+        public bool IsDouble;
+
+        public void Add(object? v)
+        {
+            if (v is null) { Nulls++; return; }
+            Values++;
+            switch (v)
+            {
+                case int i: Sum += i; break;
+                case long l: Sum += l; break;
+                case decimal d: Sum += d; break;
+                case double x: DoubleSum += x; IsDouble = true; break;
+                case DateTime or DateOnly: break;
+                default: return; // strings, booleans, guids: only the null count is interesting
+            }
+            var c = (IComparable)v;
+            if (Min is null || c.CompareTo(Min) < 0) Min = v;
+            if (Max is null || c.CompareTo(Max) > 0) Max = v;
+        }
+    }
+
+    public static async Task RunAsync(string path, int maxRows, bool stats, TextWriter output)
     {
         await using var stream = File.OpenRead(path);
         await using var reader = await ParquetReader.CreateAsync(stream, new ParquetOptions { UseDateOnlyTypeForDates = true });
@@ -26,6 +54,32 @@ public static class ParquetInspect
         output.WriteLine("columns:");
         foreach (var f in fields)
             output.WriteLine($"  {f.Name,-16} {Describe(f),-18} {(f.IsNullable ? "optional" : "required")}");
+
+        if (stats)
+        {
+            // One row group at a time, so this works on files far larger than memory.
+            var all = fields.Select(_ => new Stat()).ToArray();
+            for (var g = 0; g < reader.RowGroupCount; g++)
+            {
+                using var rg = reader.OpenRowGroupReader(g);
+                var count = (int)rg.RowCount;
+                for (var i = 0; i < fields.Length; i++)
+                    foreach (var v in await ReadColumnAsync(rg, fields[i], count)) all[i].Add(v);
+            }
+            output.WriteLine("statistics:");
+            for (var i = 0; i < fields.Length; i++)
+            {
+                var s = all[i];
+                var line = $"  {fields[i].Name,-16} nulls={s.Nulls}";
+                if (s.Min is not null)
+                {
+                    line += $" min={Format(s.Min)} max={Format(s.Max)}";
+                    if (s.IsDouble) line += $" sum={s.DoubleSum.ToString("R", CultureInfo.InvariantCulture)}";
+                    else if (s.Min is not DateTime and not DateOnly) line += $" sum={s.Sum.ToString(CultureInfo.InvariantCulture)}";
+                }
+                output.WriteLine(line);
+            }
+        }
 
         if (maxRows <= 0) return;
         output.WriteLine($"first {Math.Min(totalRows, maxRows)} rows:");

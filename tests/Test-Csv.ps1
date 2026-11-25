@@ -48,6 +48,12 @@ Assert-Match $i.Text 'has, comma' 'a quoted comma is kept'
 Assert-Match $i.Text 'say "hi"' 'an escaped quote is kept'
 Assert-Match $i.Text '2026-03-01 00:00:00 ' 'a Z timestamp is read'
 
+$s = Invoke-Parqueter inspect $out --rows 0 --stats
+Assert-Match $s.Text '(?m)^\s+Id\s+nulls=0 min=1 max=3 sum=6$' 'inspect --stats: Id statistics'
+Assert-Match $s.Text '(?m)^\s+Quantity\s+nulls=1 min=5 max=7 sum=12$' 'inspect --stats: Quantity has one null and sums to 12'
+Assert-Match $s.Text '(?m)^\s+Name\s+nulls=1$' 'inspect --stats: Name has one null'
+Assert-Match $s.Text '(?m)^\s+Price\s+nulls=0 min=0\.99\d* max=1234\.56789012\d* sum=1248\.05789012\d*$' 'inspect --stats: decimal sum is exact'
+
 # --- 2. Explicit schema ----------------------------------------------------
 Write-Host 'Explicit schema'
 $schema = Join-Path $work 'schema.json'
