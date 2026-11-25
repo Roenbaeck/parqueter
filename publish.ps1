@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Builds the single-file, framework-dependent parqueter.exe for Windows into ./publish.
-    Needs the .NET 8 SDK (run it in the codespace); the resulting exe needs only the .NET 8 runtime.
+    Needs the .NET 8 SDK (the devcontainer has it); the resulting exe needs only the .NET 8 runtime.
 #>
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot

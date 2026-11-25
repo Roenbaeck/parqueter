@@ -5,6 +5,7 @@
 	},
 	"features": {
 		"ghcr.io/devcontainers/features/powershell:1": {},
+		// Optional: an SSH server, so that `gh codespace ssh` can run commands in the codespace from outside it.
 		"ghcr.io/devcontainers/features/sshd:1": {
 			"version": "latest"
 		}

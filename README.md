@@ -77,12 +77,13 @@ for bad data), `2` wrong command line. A failed run leaves no output file behind
 ## Design
 
 parqueter does one thing: **typed rows in, Parquet out.** It does not know about databases or REST APIs: getting data
-out of SQL Server, Oracle, Snowflake, IFS, Jira and so on is done by the tools that are already approved for that
-(PowerShell 5.1 with its drivers and modules), which hand the rows to parqueter.
+out of SQL Server, Oracle, Snowflake, IFS, Jira and so on is left to the tools that already know how (PowerShell 5.1
+with its drivers and modules), which hand the rows to parqueter. That keeps the exe small, with no database drivers of its own.
 
 Every input has a *schema*: for each column a type, whether it may be null, and for decimals the precision and scale.
-The schema is what ends up in the Parquet file, so a null stays a null (the PSParquet module cannot do that: it writes
-every column as required and turns a null integer into 0).
+The schema is what ends up in the Parquet file, so a null stays a null. (The PowerShell module PSParquet 0.2.x, for comparison,
+takes the types from the first object, writes every column as required and turns a null integer into 0; `Test-Parquet.ps1`
+shows this.)
 
 | Input | Command |
 |---|---|
@@ -211,7 +212,7 @@ they work on files far larger than memory. Use them to check a conversion agains
 parqueter inspect orders.parquet --rows 0 --stats
 ```
 ```
-  Amount           nulls=0 min=0 max=400000000 sum=8836459253.88
+  Amount           nulls=0 min=0.99 max=1234.5 sum=1248.49
 ```
 ```sql
 SELECT COUNT(*), SUM(Amount), MIN(Amount), MAX(Amount) FROM dbo.Orders;
@@ -275,8 +276,8 @@ Get-ParqueterSchema -Reader $reader | Format-Table Name, SourceType, Type, Nulla
 ### Oracle, Snowflake and other databases
 
 Any provider that gives a data reader works the same way, for example ODBC with the vendor's driver
-(`System.Data.Odbc.OdbcConnection`). The ODBC route is tested with the SQL Server ODBC driver (same schema and same
-numbers as SqlClient), but **not yet with the Oracle or Snowflake drivers**, so look at `Get-ParqueterSchema` first:
+(`System.Data.Odbc.OdbcConnection`). Only the SQL Server ODBC driver has been verified (same schema and same numbers as
+SqlClient); the Oracle and Snowflake drivers have not, so look at `Get-ParqueterSchema` first:
 
 ```powershell
 $connection = New-Object System.Data.Odbc.OdbcConnection 'DSN=mydsn'     # or a full Driver=...;Server=... string
@@ -321,12 +322,13 @@ Strings, characters and `TimeSpan` become `string`; `Byte`, `Int16`, `Int32` bec
 `Guid` `guid`; `Decimal` `decimal(precision, scale)` from the reader. Binary columns are refused: convert them in the query.
 
 **Scale and memory.** Nothing is collected in PowerShell: the reader is read one row at a time, written to parqueter's stdin,
-and parqueter holds one row group (100,000 rows by default, `-RowGroupSize`) at a time. Measured against a SQL Server test
-database: 11,855,549 rows (3 columns: int, `decimal(17,2)`, datetime) in 57 seconds, about 208,000 rows/s, to an 80 MB file.
-Peak memory was 94 MB for PowerShell and 73 MB for parqueter (private bytes), and count, sum, minimum and maximum matched SQL exactly.
+and parqueter holds one row group (100,000 rows by default, `-RowGroupSize`) at a time. Example measurement with SQL Server
+as the source: 11,855,549 rows (3 columns: int, `decimal(17,2)`, datetime) in 57 seconds, about 208,000 rows/s, to an 80 MB file.
+Peak memory was 94 MB for PowerShell and 73 MB for parqueter (private bytes), and count, sum, minimum and maximum matched SQL
+exactly. Speed depends on the machine and the network; memory does not grow with the number of rows.
 
-**Tested with** a `DataTable` reader (`tests/Test-Module.ps1`, no server needed) and against a real SQL Server 2014 database,
-through both `System.Data.SqlClient` and ODBC (schema, nullability, Swedish letters, decimals, timestamps, and the 11.9 million rows above).
+**Tested with** a `DataTable` reader (`tests/Test-Module.ps1`, no server needed) and with SQL Server 2014 through both
+`System.Data.SqlClient` and ODBC (schema, nullability, national letters, decimals, timestamps, and the 11.9 million rows above).
 
 ## Loading the files into Snowflake
 
@@ -349,8 +351,9 @@ COPY INTO ledger FROM @mystage/ledger.parquet
   FILE_FORMAT = (FORMAT_NAME = 'pq_logical') MATCH_BY_COLUMN_NAME = CASE_SENSITIVE;
 ```
 
-`USING TEMPLATE` worked in a Snowsight workspace but failed through the SQL REST API (cause unknown). There the column
-list can be generated instead and pasted into `CREATE TABLE ledger ( ... )`:
+`USING TEMPLATE` works in a Snowsight workspace. Sent through the Snowflake SQL REST API it failed with "result from
+sub-query must be a single scalar value" (cause unknown); there the column list can be generated instead and pasted
+into `CREATE TABLE ledger ( ... )`:
 `SELECT GENERATE_COLUMN_DESCRIPTION(ARRAY_AGG(OBJECT_CONSTRUCT(*)), 'table') FROM TABLE(INFER_SCHEMA(...))`.
 Required columns in the Parquet file become `NOT NULL`. Check the load with `parqueter inspect --stats` against
 `SELECT COUNT(*), SUM(...), MIN(...), MAX(...)` on the table.
@@ -387,10 +390,13 @@ avoids all three. For plain names use `--ascii-names` (or an alias in the query)
 
 ## Build and test
 
-There is no .NET SDK on the laptop; the project is built in a GitHub codespace (see `.devcontainer`).
+Building needs the .NET 8 SDK. The repository has a devcontainer (`.devcontainer`) with the SDK, PowerShell 7 and the PSParquet
+module, which works in GitHub Codespaces or any other devcontainer host, so nothing has to be installed locally.
+The tests are PowerShell scripts: `Test-Csv.ps1` and `Test-Jsonl.ps1` run in Windows PowerShell 5.1 and PowerShell 7,
+`Test-Module.ps1` in Windows PowerShell 5.1 only.
 
 ```powershell
-./publish.ps1                                       # in the codespace: builds publish/parqueter.exe (framework-dependent, single file)
+./publish.ps1                                       # builds publish/parqueter.exe (framework-dependent, single file, win-x64)
 ./tests/Test-Csv.ps1                                # builds and tests with the dotnet CLI (also on Linux)
 ./tests/Test-Jsonl.ps1
 ./tests/Test-Csv.ps1 -Exe .\publish\parqueter.exe   # tests the exe, also in Windows PowerShell 5.1
@@ -398,7 +404,8 @@ There is no .NET SDK on the laptop; the project is built in a GitHub codespace (
 ./tests/Test-Module.ps1 -Exe .\publish\parqueter.exe    # the PowerShell module (Windows PowerShell 5.1)
 ```
 
-`Test-Parquet.ps1` is the earlier smoke test of the PSParquet module (PowerShell 7.4 or later), kept for reference.
+`Test-Parquet.ps1` is a small experiment, separate from parqueter, that writes typed and CSV-style data with the PSParquet
+module and prints what ended up in the file (it needs PowerShell 7.4 or later and `Install-Module PSParquet`).
 
 ## License
 
