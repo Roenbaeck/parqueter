@@ -57,7 +57,7 @@ public static class ParquetOut
         ColumnType.Double   => new DataField(c.Name, typeof(double), c.Nullable),
         ColumnType.Guid     => new DataField(c.Name, typeof(Guid), c.Nullable),
         ColumnType.Date     => new DataField(c.Name, typeof(DateOnly), c.Nullable),
-        ColumnType.DateTime => new DateTimeDataField(c.Name, DateTimeFormat.DateAndTime, isAdjustedToUTC: false, unit: DateTimeTimeUnit.Micros, isNullable: c.Nullable),
+        ColumnType.DateTime => new DateTimeDataField(c.Name, DateTimeFormat.Timestamp, isAdjustedToUTC: false, unit: DateTimeTimeUnit.Micros, isNullable: c.Nullable),
         ColumnType.Decimal  => new DecimalDataField(c.Name, c.Precision ?? 38, c.Scale ?? 0, isNullable: c.Nullable),
         _ => throw new InvalidOperationException($"Unhandled column type {c.Type}"),
     };

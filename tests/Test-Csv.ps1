@@ -10,37 +10,9 @@
 param([string] $Exe)
 
 $ErrorActionPreference = 'Stop'
-$root = Split-Path $PSScriptRoot -Parent
-
-if ($Exe) {
-    $runner = @($Exe)
-} else {
-    & dotnet build (Join-Path $root 'src/Parqueter') -c Release -o (Join-Path $root 'out/bin') --nologo -v quiet
-    if ($LASTEXITCODE -ne 0) { throw 'build failed' }
-    $runner = @('dotnet', (Join-Path $root 'out/bin/parqueter.dll'))
-}
-
-function Invoke-Parqueter {
-    # Windows PowerShell 5.1 turns native stderr into terminating errors under 'Stop'; we want to read it.
-    $ErrorActionPreference = 'Continue'
-    $prefix = @($runner | Select-Object -Skip 1)
-    $output = & $runner[0] @prefix @args 2>&1
-    [pscustomobject]@{ ExitCode = $LASTEXITCODE; Text = ($output | ForEach-Object { "$_" }) -join "`n" }
-}
-
-$work = Join-Path $root 'out/test-csv'
-Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
-$null = New-Item -ItemType Directory -Force $work
-
-$failures = 0
-function Assert-Match($text, $pattern, $what) {
-    if ($text -match $pattern) { Write-Host "  ok    $what" -ForegroundColor Green }
-    else { Write-Host "  FAIL  $what  (expected /$pattern/)" -ForegroundColor Red; $script:failures++ }
-}
-function Assert-True($condition, $what) {
-    if ($condition) { Write-Host "  ok    $what" -ForegroundColor Green }
-    else { Write-Host "  FAIL  $what" -ForegroundColor Red; $script:failures++ }
-}
+. "$PSScriptRoot/TestHelpers.ps1"
+Initialize-Runner $Exe
+$work = New-WorkDirectory 'test-csv'
 
 # --- 1. Inference ----------------------------------------------------------
 Write-Host 'Inferred schema'
@@ -64,7 +36,7 @@ Assert-Match $i.Text 'rows: 3' 'three rows'
 Assert-Match $i.Text '(?m)^\s+Id\s+int32\s+required' 'Id is a required int32'
 Assert-Match $i.Text '(?m)^\s+Name\s+string\s+optional' 'Name is an optional string'
 Assert-Match $i.Text '(?m)^\s+Price\s+decimal\(38,8\)\s+required' 'Price is decimal(38,8)'
-Assert-Match $i.Text '(?m)^\s+Created\s+datetime\s+required' 'Created is a datetime'
+Assert-Match $i.Text '(?m)^\s+Created\s+datetime\(micros\)\s+required' 'Created is a datetime with microseconds'
 Assert-Match $i.Text '(?m)^\s+Guid\s+guid\s+required' 'Guid is a guid'
 Assert-Match $i.Text '(?m)^\s+Active\s+bool\s+required' 'Active is a bool'
 Assert-Match $i.Text '(?m)^\s+Quantity\s+int32\s+optional' 'Quantity is an optional int32'
@@ -105,7 +77,7 @@ Assert-True (-not (Test-Path (Join-Path $work 'bad.parquet'))) 'no half-written 
 # --- 4. Options ------------------------------------------------------------
 Write-Host 'Swedish style: ; delimiter, comma decimals, NULL token, windows-1252'
 $sv = Join-Path $work 'sv.csv'
-$bytes = [Text.Encoding]::GetEncoding(1252).GetBytes("Namn;Belopp;Datum`nÅke;12,5;2026-01-02`nBjörn;NULL;2026-01-03`n")
+$bytes = [Text.Encoding]::GetEncoding(1252).GetBytes("Namn;Belopp;Datum`n${Aring}ke;12,5;2026-01-02`nBj${ouml}rn;NULL;2026-01-03`n")
 [IO.File]::WriteAllBytes($sv, $bytes)
 $svOut = Join-Path $work 'sv.parquet'
 $r = Invoke-Parqueter csv $sv $svOut --delimiter ';' --culture sv-SE --encoding windows-1252 --null NULL
@@ -113,8 +85,7 @@ Assert-True ($r.ExitCode -eq 0) 'csv with Swedish options exits with 0'
 if ($r.ExitCode -ne 0) { Write-Host $r.Text }
 $i = Invoke-Parqueter inspect $svOut
 Assert-Match $i.Text '(?m)^\s+Belopp\s+decimal\(38,1\)\s+optional' 'Belopp is a nullable decimal'
-Assert-Match $i.Text 'Åke \| 12\.5 \| 2026-01-02' 'Å and the decimal comma are read'
-Assert-Match $i.Text 'Björn \| NULL \| 2026-01-03' 'the NULL token is a null'
+Assert-Match $i.Text "${Aring}ke \| 12\.5 \| 2026-01-02" 'windows-1252 letters and the decimal comma are read'
+Assert-Match $i.Text "Bj${ouml}rn \| NULL \| 2026-01-03" 'the NULL token is a null'
 
-if ($failures -gt 0) { Write-Host "`n$failures check(s) failed." -ForegroundColor Red; exit 1 }
-Write-Host "`nAll checks passed." -ForegroundColor Green
+Complete-Tests

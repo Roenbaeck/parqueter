@@ -39,19 +39,22 @@ public sealed class TableSchema
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };
 
-    public static TableSchema Load(string path)
+    public static TableSchema Load(string path) => Parse(File.ReadAllText(path), $"Schema file {path}");
+
+    /// <param name="source">Where the text came from, for error messages.</param>
+    public static TableSchema Parse(string json, string source)
     {
         TableSchema? schema;
         try
         {
-            schema = JsonSerializer.Deserialize<TableSchema>(File.ReadAllText(path), JsonOptions);
+            schema = JsonSerializer.Deserialize<TableSchema>(json, JsonOptions);
         }
         catch (JsonException e)
         {
-            throw new FormatException($"Schema file {path} is not valid: {e.Message}");
+            throw new FormatException($"{source} is not a valid schema: {e.Message}");
         }
-        if (schema is null) throw new FormatException($"Schema file {path} is empty.");
-        schema.Validate(path);
+        if (schema is null) throw new FormatException($"{source} is empty.");
+        schema.Validate(source);
         return schema;
     }
 
@@ -59,12 +62,12 @@ public sealed class TableSchema
 
     void Validate(string source)
     {
-        if (Columns.Count == 0) throw new FormatException($"Schema {source} has no columns.");
+        if (Columns.Count == 0) throw new FormatException($"{source} has no columns.");
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var c in Columns)
         {
-            if (string.IsNullOrWhiteSpace(c.Name)) throw new FormatException($"Schema {source} has a column without a name.");
-            if (!seen.Add(c.Name)) throw new FormatException($"Schema {source} has the column '{c.Name}' twice.");
+            if (string.IsNullOrWhiteSpace(c.Name)) throw new FormatException($"{source} has a column without a name.");
+            if (!seen.Add(c.Name)) throw new FormatException($"{source} has the column '{c.Name}' twice.");
             if (c.Type == ColumnType.Decimal)
             {
                 var p = c.Precision ?? 38;

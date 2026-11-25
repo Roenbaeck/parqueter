@@ -10,7 +10,7 @@ public static class ParquetInspect
     public static async Task RunAsync(string path, int maxRows, TextWriter output)
     {
         await using var stream = File.OpenRead(path);
-        await using var reader = await ParquetReader.CreateAsync(stream);
+        await using var reader = await ParquetReader.CreateAsync(stream, new ParquetOptions { UseDateOnlyTypeForDates = true });
         var fields = reader.Schema.DataFields;
 
         long totalRows = 0;
@@ -85,7 +85,8 @@ public static class ParquetInspect
     static string Describe(DataField f)
     {
         if (f is DecimalDataField d) return $"decimal({d.Precision},{d.Scale})";
-        if (f is DateTimeDataField dt) return dt.DateTimeFormat == DateTimeFormat.Date ? "date" : "datetime";
+        if (f is DateTimeDataField dt)
+            return dt.DateTimeFormat == DateTimeFormat.Date ? "date" : $"datetime({dt.Unit.ToString().ToLowerInvariant()})";
         var t = f.ClrType;
         if (t == typeof(int)) return "int32";
         if (t == typeof(long)) return "int64";

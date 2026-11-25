@@ -55,6 +55,7 @@ static class Cli
 
         Usage:
           parqueter csv <input.csv> <output.parquet> [options]
+          parqueter jsonl <input.jsonl | -> <output.parquet> [options]
           parqueter inspect <file.parquet> [--rows N]
           parqueter --version
 
@@ -69,6 +70,11 @@ static class Cli
           --keep-empty-strings     An empty field in a string column is "" instead of null.
           --row-group-size <n>     Rows per Parquet row group. Default 100000.
           --force                  Overwrite the output file if it exists.
+
+        jsonl options (input "-" is stdin, so a script can pipe rows in):
+          The first line is the schema, the same JSON as a schema file, unless --schema is given.
+          Every other line is a row: a JSON array in column order, or an object keyed by column name.
+          --schema <file>, --write-schema <file>, --encoding <name>, --row-group-size <n>, --force
 
         Types in a schema file: string, bool, int32, int64, decimal, double, dateTime, date, guid.
         """;
@@ -87,6 +93,7 @@ static class Cli
         switch (first)
         {
             case "csv": return await CsvAsync(args);
+            case "jsonl": return await JsonlAsync(args);
             case "inspect": return await InspectAsync(args);
             default: throw new CliException($"Unknown command '{first}'. Try: parqueter --help", 2);
         }
@@ -113,7 +120,7 @@ static class Cli
         var output = a.Positional[1];
 
         if (!File.Exists(input)) throw new CliException($"The input file {input} does not exist.");
-        if (File.Exists(output) && !a.Has("force")) throw new CliException($"The output file {output} exists. Use --force to overwrite it.");
+        CheckOutput(output, a);
 
         var options = new CsvOptions
         {
@@ -127,20 +134,56 @@ static class Cli
                 KeepEmptyStrings = a.Has("keep-empty-strings"),
             },
         };
-        var groupSize = a.Get("row-group-size") is { } g ? ParseInt(g, "--row-group-size") : 100_000;
-        if (groupSize < 1) throw new CliException("--row-group-size must be at least 1.", 2);
+        var groupSize = RowGroupSize(a);
 
         var inferred = a.Get("schema") is null;
         var schema = inferred ? CsvTable.Infer(input, options) : TableSchema.Load(a.Get("schema")!);
         if (a.Get("write-schema") is { } schemaPath) schema.Save(schemaPath);
 
         var rows = await ParquetOut.WriteAsync(output, schema, CsvTable.ReadRows(input, schema, options), groupSize);
+        Report(schema, inferred ? "inferred" : "used", rows, output);
+        return 0;
+    }
 
-        Console.WriteLine($"{(inferred ? "inferred" : "used")} schema:");
+    static async Task<int> JsonlAsync(Args a)
+    {
+        a.AllowOnly("schema", "write-schema", "encoding", "row-group-size", "force");
+        if (a.Positional.Count != 2) throw new CliException("Usage: parqueter jsonl <input.jsonl | -> <output.parquet> [options]", 2);
+        var input = a.Positional[0];
+        var output = a.Positional[1];
+
+        if (input != "-" && !File.Exists(input)) throw new CliException($"The input file {input} does not exist.");
+        CheckOutput(output, a);
+        var groupSize = RowGroupSize(a);
+
+        using var reader = new JsonLinesReader(input, ParseEncoding(a.Get("encoding")));
+        var fromStream = a.Get("schema") is null;
+        var schema = fromStream ? reader.ReadSchema() : TableSchema.Load(a.Get("schema")!);
+        if (a.Get("write-schema") is { } schemaPath) schema.Save(schemaPath);
+
+        var rows = await ParquetOut.WriteAsync(output, schema, reader.ReadRows(schema), groupSize);
+        Report(schema, fromStream ? "schema from the input" : "schema from file", rows, output);
+        return 0;
+    }
+
+    static void CheckOutput(string output, Args a)
+    {
+        if (File.Exists(output) && !a.Has("force")) throw new CliException($"The output file {output} exists. Use --force to overwrite it.");
+    }
+
+    static int RowGroupSize(Args a)
+    {
+        var size = a.Get("row-group-size") is { } g ? ParseInt(g, "--row-group-size") : 100_000;
+        if (size < 1) throw new CliException("--row-group-size must be at least 1.", 2);
+        return size;
+    }
+
+    static void Report(TableSchema schema, string how, long rows, string output)
+    {
+        Console.WriteLine($"{how}:");
         foreach (var c in schema.Columns)
             Console.WriteLine($"  {c.Name,-16} {TypeName(c),-18} {(c.Nullable ? "nullable" : "not null")}");
         Console.WriteLine($"wrote {rows} rows to {output}");
-        return 0;
     }
 
     static string TypeName(Column c) => c.Type == ColumnType.Decimal ? $"decimal({c.Precision ?? 38},{c.Scale ?? 0})" : c.Type.ToString().ToLowerInvariant();
