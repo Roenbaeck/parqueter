@@ -1,11 +1,20 @@
-using System.Reflection;
+using System.Text;
+using System.Text.Json;
+using Parqueter;
 
-// Hello World, plus proof that Parquet.Net is bundled inside the single exe.
-var parquet = typeof(Parquet.ParquetWriter).Assembly;
-var version = parquet.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-              ?? parquet.GetName().Version?.ToString();
+Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-Console.WriteLine("Hello from parqueter!");
-Console.WriteLine($"Runtime:     {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
-Console.WriteLine($"Parquet.Net: {version}");
-Console.WriteLine($"Executable:  {Environment.ProcessPath}");
+try
+{
+    return await Cli.RunAsync(args);
+}
+catch (CliException e)
+{
+    Console.Error.WriteLine($"error: {e.Message}");
+    return e.ExitCode;
+}
+catch (Exception e) when (e is FormatException or IOException or UnauthorizedAccessException or JsonException)
+{
+    Console.Error.WriteLine($"error: {e.Message}");
+    return 1;
+}

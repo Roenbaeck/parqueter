@@ -7,17 +7,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>parqueter</AssemblyName>
     <RootNamespace>Parqueter</RootNamespace>
-
-    <!-- One file to ship: framework-dependent single-file exe for Windows.
-         Needs the .NET 8 runtime on the machine that runs it.
-         dotnet publish src/Parqueter -c Release -->
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <SelfContained>false</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
+    <Version>0.1.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Parquet.Net" Version="6.1.0" />
   </ItemGroup>
+
+  <!-- The single-file Windows exe is produced by publish.ps1 at the repo root. -->
 
 </Project>
