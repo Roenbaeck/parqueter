@@ -63,7 +63,8 @@ There is nothing to install: download **`parqueter.exe`** (and, for PowerShell u
 
 | File | What it is |
 |---|---|
-| `parqueter-<version>-win-x64.zip` | the exe, the module, the README and the license, together |
+| `parqueter-<version>-win-x64.zip` | the exe, the module, the README, the license and the [third-party notices](THIRD-PARTY-NOTICES.md), together |
+| `THIRD-PARTY-NOTICES.md` | the licenses of the libraries that are built into the exe |
 | `parqueter.exe` | the exe alone |
 | `Parqueter.psm1` | the PowerShell module alone |
 | `SHA256SUMS.txt` | checksums of the files above |
@@ -404,6 +405,25 @@ avoids all three. For plain names use `--ascii-names` (or an alias in the query)
 * CSV dates are ISO 8601 unless the schema gives a `format`.
 * Windows x64 and the .NET 8 runtime for the exe; Windows PowerShell 5.1 for the module (not tested in PowerShell 7).
 * The Oracle and Snowflake ODBC drivers have not been tried (SQL Server through SqlClient and ODBC has).
+
+## Dependencies
+
+parqueter uses [Parquet.Net](https://www.nuget.org/packages/Parquet.Net) 6.1.0 (MIT) to write and read Parquet files.
+**Parquet.Net was retired by its author on 10 November 2026**: the GitHub repository is gone, no new versions are planned,
+and the author says the NuGet package will stay available. The library is stable and parqueter only uses its basics (flat
+tables, standard types), so this is not an immediate problem, but there will be no fixes and no support for future Parquet
+or .NET versions.
+
+* The version is **pinned exactly** (`Parquet.Net 6.1.0` in `src/Parqueter/Parqueter.csproj`) and the exe has it built in,
+  so exes that have been released are not affected.
+* The six packages that go into the exe (Parquet.Net and the five libraries it needs) are kept in
+  [`third-party/nuget/`](third-party/nuget), with the hashes NuGet recorded, so that a build never depends on nuget.org or on
+  the package staying there: `dotnet restore src/Parqueter --source third-party/nuget` restores, builds and runs the
+  tool from these copies alone (verified with an empty package cache). Publishing the Windows exe with `-r win-x64` also needs
+  Microsoft's own host and runtime packs, which come from nuget.org as usual and are not part of this risk.
+* The licenses of all built-in libraries are in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which is also in the release zip.
+* Only `ParquetOut.cs` and `ParquetInspect.cs` use the library; the CSV reading, the schemas and the PowerShell module do
+  not. Replacing it later with another Parquet library is therefore a contained change.
 
 ## Build and test
 

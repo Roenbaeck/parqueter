@@ -51,8 +51,8 @@ jobs:
           $version = '${{ steps.version.outputs.version }}'
           if (-not $version) { $version = 'dev' }
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item publish/parqueter.exe, powershell/Parqueter.psm1 dist/
-          Compress-Archive -Path publish/parqueter.exe, powershell/Parqueter.psm1, README.md, LICENSE -DestinationPath "dist/parqueter-$version-win-x64.zip"
+          Copy-Item publish/parqueter.exe, powershell/Parqueter.psm1, THIRD-PARTY-NOTICES.md dist/
+          Compress-Archive -Path publish/parqueter.exe, powershell/Parqueter.psm1, README.md, LICENSE, THIRD-PARTY-NOTICES.md -DestinationPath "dist/parqueter-$version-win-x64.zip"
           Get-ChildItem dist -File | Where-Object Name -ne 'SHA256SUMS.txt' | ForEach-Object {
               '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
           } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
