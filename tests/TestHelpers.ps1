@@ -70,4 +70,5 @@ function Assert-True {
 function Complete-Tests {
     if ($script:failures -gt 0) { Write-Host "`n$($script:failures) check(s) failed." -ForegroundColor Red; exit 1 }
     Write-Host "`nAll checks passed." -ForegroundColor Green
+    exit 0   # explicit, so a caller can rely on $LASTEXITCODE (the last command of a test may be one that is meant to fail)
 }

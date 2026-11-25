@@ -58,13 +58,30 @@ $reader.Dispose(); $connection.Dispose()
 
 ## Install
 
-There is nothing to install: copy **`parqueter.exe`** (and, for PowerShell use, **`Parqueter.psm1`**) to a folder.
+There is nothing to install: download **`parqueter.exe`** (and, for PowerShell use, **`Parqueter.psm1`**) from the
+[latest release](https://github.com/Roenbaeck/parqueter/releases/latest) and put them in a folder. A release has:
+
+| File | What it is |
+|---|---|
+| `parqueter-<version>-win-x64.zip` | the exe, the module, the README and the license, together |
+| `parqueter.exe` | the exe alone |
+| `Parqueter.psm1` | the PowerShell module alone |
+| `SHA256SUMS.txt` | checksums of the files above |
+
+```powershell
+$base = 'https://github.com/Roenbaeck/parqueter/releases/latest/download'
+Invoke-WebRequest "$base/parqueter.exe" -OutFile parqueter.exe
+Invoke-WebRequest "$base/Parqueter.psm1" -OutFile Parqueter.psm1
+Invoke-WebRequest "$base/SHA256SUMS.txt" -OutFile SHA256SUMS.txt
+(Get-FileHash .\parqueter.exe).Hash.ToLower()     # compare with the parqueter.exe line in SHA256SUMS.txt
+```
 
 * Needs the **.NET 8 runtime** (Windows, x64). Windows PowerShell **5.1** is enough for the module.
 * `parqueter.exe` is a single file with its libraries built in. It is not code signed. If Windows blocks a copy
   that came from a download, run `Unblock-File .\parqueter.exe`.
 * The module finds the exe through `-ParqueterPath`, then `$env:PARQUETER_EXE`, then next to the module, then on the PATH.
-* The exe is built with `./publish.ps1`, see [Build and test](#build-and-test).
+  Keep the two files in the same folder and no path is needed.
+* To build the exe yourself, see [Build and test](#build-and-test).
 
 ```
 parqueter --version
@@ -403,6 +420,18 @@ The tests are PowerShell scripts: `Test-Csv.ps1` and `Test-Jsonl.ps1` run in Win
 ./tests/Test-Jsonl.ps1 -Exe .\publish\parqueter.exe
 ./tests/Test-Module.ps1 -Exe .\publish\parqueter.exe    # the PowerShell module (Windows PowerShell 5.1)
 ```
+
+**Continuous build and releases.** The GitHub Actions workflow `.github/workflows/build.yml` runs on every push and pull
+request: it builds the exe on a Windows runner and runs `Test-Csv.ps1`, `Test-Jsonl.ps1` and `Test-Module.ps1` in Windows
+PowerShell 5.1. The files of every run can be downloaded as a workflow artifact. To make a release, push a version tag; the
+version is taken from the tag, the tests run first, and the release gets the files listed under [Install](#install):
+
+```powershell
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+A tag with a hyphen (`v0.2.0-rc1`) is published as a pre-release. `./publish.ps1 -Version 0.2.0` builds the same exe locally.
 
 `Test-Parquet.ps1` is a small experiment, separate from parqueter, that writes typed and CSV-style data with the PSParquet
 module and prints what ended up in the file (it needs PowerShell 7.4 or later and `Install-Module PSParquet`).
