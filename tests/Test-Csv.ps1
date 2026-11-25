@@ -164,6 +164,33 @@ $s = Invoke-Parqueter inspect $negOut --rows 0 --stats
 Assert-Match $s.Text '(?m)^\s+Belopp\s+nulls=0 min=-1\.5\d* max=2\.25\d* sum=0\.75\d*$' 'an ordinary minus sign is a negative decimal, not text'
 Assert-Match $s.Text '(?m)^\s+Antal\s+nulls=0 min=-3 max=4 sum=1$' 'an ordinary minus sign is a negative integer'
 
+Write-Host '--ascii-names'
+$an = Join-Path $work 'ascii.csv'
+$anHeader = "${Aring}R;KOSTNADSST${Auml}LLE;Timmar_N${Auml}rvarande;Plain name;Id"
+[IO.File]::WriteAllText($an, "$anHeader`n2026;1;1,5;x;7`n2026;2;2,5;y;8`n", (New-Object Text.UTF8Encoding $false))
+$anOut = Join-Path $work 'ascii.parquet'
+$anSchema = Join-Path $work 'ascii.schema.json'
+$r = Invoke-Parqueter csv $an $anOut --delimiter ';' --culture sv-SE --ascii-names --write-schema $anSchema
+Assert-True ($r.ExitCode -eq 0) '--ascii-names converts'
+if ($r.ExitCode -ne 0) { Write-Host $r.Text }
+$i = Invoke-Parqueter inspect $anOut --rows 0
+Assert-Match $i.Text '(?m)^\s+AR\s+int32\s+required' "the A-ring in the first column name becomes A"
+Assert-Match $i.Text '(?m)^\s+KOSTNADSSTALLE\s+int32' 'a diaeresis is removed'
+Assert-Match $i.Text '(?m)^\s+Timmar_Narvarande\s+decimal' 'case and underscores are kept'
+Assert-Match $i.Text '(?m)^\s+Plain_name\s+string' 'a space becomes an underscore'
+Assert-True (-not ($i.Text -match '[^\x00-\x7F]')) 'the file has only ASCII in its output'
+$schemaText = [IO.File]::ReadAllText($anSchema, (New-Object Text.UTF8Encoding $false))
+Assert-Match $schemaText '"source":\s*"' 'the schema file records the original header name as source'
+Assert-True (-not ($schemaText -match '"source":\s*"Id"')) 'a name that did not change has no source'
+$anOut2 = Join-Path $work 'ascii2.parquet'
+$r = Invoke-Parqueter csv $an $anOut2 --delimiter ';' --culture sv-SE --schema $anSchema
+Assert-True ($r.ExitCode -eq 0) 'the written schema can be used again with the original file'
+$dup = Join-Path $work 'ascii-dup.csv'
+[IO.File]::WriteAllText($dup, "${Aring}R;AR`n1;2`n", (New-Object Text.UTF8Encoding $false))
+$r = Invoke-Parqueter csv $dup (Join-Path $work 'ascii-dup.parquet') --delimiter ';' --ascii-names
+Assert-True ($r.ExitCode -ne 0) 'two columns that become the same name are an error'
+Assert-Match $r.Text 'both become' 'the error says which names collide'
+
 Write-Host 'No header'
 $nh = Join-Path $work 'noheader.csv'
 [IO.File]::WriteAllText($nh, "FC1;X1;2026;10;5.00000000`nFC1;X2;2026;11;6.50000000`n", (New-Object Text.UTF8Encoding $true))

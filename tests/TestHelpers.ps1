@@ -6,6 +6,7 @@ $script:failures = 0
 # Windows PowerShell 5.1 reads a .ps1 without a BOM as ANSI, which mangles literal non-ASCII text.
 # Build such characters from their code points so the tests really test encodings.
 $Aring = [string][char]0x00C5   # A with ring above
+$Auml  = [string][char]0x00C4   # A with diaeresis
 $ouml  = [string][char]0x00F6   # o with diaeresis
 
 function Initialize-Runner {

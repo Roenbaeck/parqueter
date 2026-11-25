@@ -11,6 +11,12 @@ public sealed class Column
     public required string Name { get; init; }
     public required ColumnType Type { get; init; }
 
+    /// <summary>
+    /// CSV only: the name of the column in the file's header, when it differs from <see cref="Name"/>
+    /// (for example after --ascii-names, or when the schema file was edited to rename a column).
+    /// </summary>
+    public string? Source { get; init; }
+
     /// <summary>Whether the column may contain nulls. Defaults to true, the safe choice.</summary>
     public bool Nullable { get; init; } = true;
 

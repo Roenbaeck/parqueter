@@ -13,7 +13,7 @@ sealed class CliException(string message, int exitCode = 1) : Exception(message)
 /// <summary>--name value options (repeatable), --flag switches and positional arguments.</summary>
 sealed class Args
 {
-    static readonly HashSet<string> Flags = new() { "no-header", "keep-empty-strings", "force", "help", "stats" };
+    static readonly HashSet<string> Flags = new() { "no-header", "keep-empty-strings", "force", "help", "stats", "ascii-names" };
 
     readonly Dictionary<string, List<string>> _options = new();
     readonly HashSet<string> _flags = new();
@@ -73,6 +73,9 @@ static class Cli
           --row-delimiter <text>   What ends a row: crlf, lf, cr or any text. By default any line break does.
                                    Give it when text fields contain line breaks: only this exact text ends a row.
           --no-header              The first row is data; columns are named column1, column2, ...
+          --ascii-names            Make column names plain ASCII (letters, digits, _): A-ring and A-diaeresis
+                                   become A, O-diaeresis O, spaces and dashes _. Snowflake and most databases
+                                   then need no quoting. The original name is kept as "source" in the schema.
           --encoding <name>        Text encoding, e.g. utf-8 (default), windows-1252, iso-8859-1.
           --culture <name>         Culture for numbers, e.g. sv-SE where 12,5 is a decimal. Default invariant.
           --null <text>            Text that means null (besides an empty field). Can be repeated.
@@ -122,7 +125,7 @@ static class Cli
 
     static async Task<int> CsvAsync(Args a)
     {
-        a.AllowOnly("schema", "write-schema", "delimiter", "quote", "row-delimiter", "no-header", "encoding", "culture", "null",
+        a.AllowOnly("schema", "write-schema", "delimiter", "quote", "row-delimiter", "no-header", "ascii-names", "encoding", "culture", "null",
                     "keep-empty-strings", "row-group-size", "force");
         if (a.Positional.Count != 2) throw new CliException("Usage: parqueter csv <input.csv> <output.parquet> [options]", 2);
         var input = a.Positional[0];
@@ -137,6 +140,7 @@ static class Cli
             Quote = ParseQuote(a.Get("quote")),
             RowDelimiter = ParseRowDelimiter(a.Get("row-delimiter")),
             HasHeader = !a.Has("no-header"),
+            AsciiNames = a.Has("ascii-names"),
             Encoding = ParseEncoding(a.Get("encoding")),
             Parse = new ParseOptions
             {

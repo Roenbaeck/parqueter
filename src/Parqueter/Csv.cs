@@ -19,6 +19,9 @@ public sealed class CsvOptions
     public string? RowDelimiter { get; init; }
 
     public bool HasHeader { get; init; } = true;
+
+    /// <summary>Turn header names into plain ASCII identifiers (see <see cref="CsvTable.ToAsciiName"/>).</summary>
+    public bool AsciiNames { get; init; }
     public Encoding Encoding { get; init; } = new UTF8Encoding(false);
     public required ParseOptions Parse { get; init; }
 }
@@ -187,8 +190,43 @@ public static class CsvTable
         if (names is null) throw new FormatException($"{path} is empty.");
 
         var columns = new List<Column>();
-        for (var i = 0; i < names.Length; i++) columns.Add(probes![i].ToColumn(names[i], o.Parse));
+        var used = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < names.Length; i++)
+        {
+            var name = o.AsciiNames ? ToAsciiName(names[i]) : names[i];
+            if (used.TryGetValue(name, out var other))
+                throw new FormatException($"{path}: the columns '{other}' and '{names[i]}' both become '{name}' with --ascii-names. Rename one of them in a schema file.");
+            used[name] = names[i];
+            columns.Add(probes![i].ToColumn(name, names[i] == name ? null : names[i], o.Parse));
+        }
         return new TableSchema { Columns = columns };
+    }
+
+    /// <summary>
+    /// A name made of letters, digits and underscores only, so it needs no quoting in Snowflake or most other databases:
+    /// accents are removed (Å, Ä become A; Ö becomes O; é becomes e), ß becomes ss, and any other character,
+    /// such as a space or a dash, becomes an underscore. A name that would start with a digit gets a leading underscore.
+    /// </summary>
+    public static string ToAsciiName(string name)
+    {
+        var result = new StringBuilder();
+        foreach (var ch in name.Normalize(NormalizationForm.FormD))
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(ch) == UnicodeCategory.NonSpacingMark) continue; // the ring or dots of Å, Ä, Ö
+            switch (ch)
+            {
+                case 'ß': result.Append("ss"); continue;
+                case 'Æ': result.Append("AE"); continue;
+                case 'æ': result.Append("ae"); continue;
+                case 'Ø': result.Append('O'); continue;
+                case 'ø': result.Append('o'); continue;
+            }
+            if (ch < 128 && (char.IsLetterOrDigit(ch) || ch == '_')) result.Append(ch);
+            else if (result.Length == 0 || result[^1] != '_') result.Append('_');
+        }
+        var ascii = result.ToString();
+        if (ascii.Length == 0) ascii = "_";
+        return char.IsDigit(ascii[0]) ? "_" + ascii : ascii;
     }
 
     /// <summary>Streams the rows of the file, converted to the schema. Fails with a line and column on the first bad value.</summary>
@@ -255,7 +293,7 @@ public static class CsvTable
 
     static void CheckHeader(string[] header, TableSchema schema, string path)
     {
-        var expected = schema.Columns.Select(c => c.Name).ToArray();
+        var expected = schema.Columns.Select(c => c.Source ?? c.Name).ToArray();
         if (header.SequenceEqual(expected, StringComparer.Ordinal)) return;
         throw new FormatException(
             $"{path}: the header does not match the schema.\n  header: {string.Join(", ", header)}\n  schema: {string.Join(", ", expected)}");
@@ -309,7 +347,7 @@ public static class CsvTable
             || (s.Length > 1 && s[0] == '0' && char.IsDigit(s[1]))
             || (s.Length > 2 && s[0] == '-' && s[1] == '0' && char.IsDigit(s[2]));
 
-        public Column ToColumn(string name, ParseOptions o)
+        public Column ToColumn(string name, string? source, ParseOptions o)
         {
             ColumnType type;
             int? precision = null, scale = null;
@@ -328,6 +366,7 @@ public static class CsvTable
             return new Column
             {
                 Name = name,
+                Source = source,
                 Type = type,
                 Nullable = _sawToken || (_sawEmpty && emptyIsNull),
                 Precision = precision,

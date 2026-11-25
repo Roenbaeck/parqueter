@@ -45,6 +45,11 @@ files far larger than memory). Compare those numbers with a `SELECT COUNT(*), SU
   line break is data, which is how SSIS reads a flat file. Without it, such a record is split and parqueter stops
   with `expected N fields but found M` and the line number.
 * With a culture such as `sv-SE`, an ordinary `-` is still the minus sign.
+* `--ascii-names` makes column names plain ASCII (`ÅR` becomes `AR`, `KOSTNADSSTÄLLE` `KOSTNADSSTALLE`, a space or dash `_`),
+  so Snowflake and most databases need no double quotes. Quoting is SQL syntax, not part of Parquet, which accepts any
+  UTF-8 name: without this option a name like `ÅR` is stored as is, and Snowflake's load dialog asks you to quote it
+  (`"ÅR"`) and then every query has to as well. The original name is kept as `source` in the schema written by
+  `--write-schema`. A column can be renamed by editing its `name` there while `source` stays the header text.
 
 Example, an SSIS flat file (UTF-16, delimiter `0x1F`, rows end with CRLF, Swedish decimals):
 
