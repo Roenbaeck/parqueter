@@ -18,7 +18,7 @@ cannot do that: it writes every column as required and turns a null integer into
 |---|---|
 | CSV file | done: `parqueter csv` |
 | JSON Lines, from a file or stdin, for PowerShell 5.1 to pipe into | done: `parqueter jsonl` |
-| PowerShell 5.1 module that reads from any ADO.NET source and pipes to `jsonl` | planned |
+| PowerShell 5.1 module that reads from any ADO.NET source or from objects and pipes to `jsonl` | done: `powershell/Parqueter.psm1` (tested with a DataTable reader; not yet against a real database server) |
 
 ## Usage
 
@@ -84,6 +84,58 @@ an assignment inside a function is silently ignored:
 ```powershell
 $global:OutputEncoding = New-Object System.Text.UTF8Encoding $false
 ```
+
+## PowerShell module (Windows PowerShell 5.1)
+
+[powershell/Parqueter.psm1](powershell/Parqueter.psm1) is a single file next to `parqueter.exe`. It reads from any
+ADO.NET reader and takes the **schema from the reader itself** (`GetSchemaTable()`): a `NOT NULL` column
+becomes a required Parquet column, a decimal gets its precision and scale, and nulls stay nulls. Rows are
+streamed to `parqueter.exe jsonl -` by a small compiled helper, so a large table never passes through the
+PowerShell pipeline or sits in memory. If a row does not fit, or the reader fails half way, no file is left behind.
+
+```powershell
+Import-Module .\Parqueter.psm1
+
+# SQL Server (System.Data.SqlClient comes with Windows PowerShell)
+$connection = New-Object System.Data.SqlClient.SqlConnection 'Server=myserver;Database=mydb;Integrated Security=True'
+$connection.Open()
+$command = $connection.CreateCommand()
+$command.CommandText = 'SELECT OrderId, Customer, Amount, Created FROM dbo.Orders'
+$command.CommandTimeout = 0
+$reader = $command.ExecuteReader()
+Export-ParqueterFromReader -Reader $reader -Path orders.parquet -ParqueterPath .\parqueter.exe -Force
+$reader.Dispose(); $connection.Dispose()
+```
+
+Oracle and Snowflake work the same way through any provider that gives a data reader, for example ODBC
+(`System.Data.Odbc.OdbcConnection` with the Snowflake or Oracle ODBC driver). Use `Get-ParqueterSchema -Reader $reader`
+to see what will be written. When a provider cannot say a decimal's precision and scale (typical for an Oracle
+`NUMBER` without a declared size) the export stops and says so; give the answer with `-ColumnOverride`:
+
+```powershell
+Export-ParqueterFromReader -Reader $reader -Path out.parquet -ParqueterPath .\parqueter.exe `
+    -ColumnOverride @{ Amount = @{ Type = 'decimal'; Precision = 18; Scale = 4 }; Note = @{ Nullable = $true } }
+```
+
+For **REST** (IFS, Netboss, Jira ...) the script does the calling, paging and authentication, and the module
+writes the objects. Objects carry no reliable types or nullability, so the schema is declared:
+
+```powershell
+$schema = @(
+    New-ParqueterColumn Key string -NotNull
+    New-ParqueterColumn Created dateTime
+    New-ParqueterColumn Estimate decimal -Precision 18 -Scale 2
+)
+$issues | Export-ParqueterObjects -Schema $schema -Path issues.parquet -ParqueterPath .\parqueter.exe
+```
+
+`parqueter.exe` is found through `-ParqueterPath`, then `$env:PARQUETER_EXE`, then next to the module, then on the PATH.
+Provider type mapping: strings and characters (and `TimeSpan`) become `string`, `Byte`/`Int16`/`Int32` become `int32`,
+`Int64`/`UInt32` `int64`, `UInt64` `decimal(20,0)`, `Single`/`Double` `double`, `DateTime` and `DateTimeOffset`
+`dateTime` (an offset is converted to UTC; a SQL Server `date` column becomes `date`), `Guid` `guid`. Binary columns are
+refused: convert them in the query.
+
+Test it with `tests/Test-Module.ps1 -Exe .\publish\parqueter.exe` (it uses a `DataTable` reader, no server needed).
 
 ### What CSV inference does
 
