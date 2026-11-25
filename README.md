@@ -7,7 +7,7 @@ so it needs **PowerShell 7.4 or later** (it does not load in Windows PowerShell 
 ## Smoke test
 
 ```powershell
-pwsh -File .\Test-Parquet.ps1
+./Test-Parquet.ps1
 ```
 
 Writes `out/typed.parquet` (real .NET types, with nulls) and `out/csv.parquet` (all strings, as from a CSV)
