@@ -54,8 +54,8 @@ files far larger than memory). Compare those numbers with a `SELECT COUNT(*), SU
 Example, an SSIS flat file (UTF-16, delimiter `0x1F`, rows end with CRLF, Swedish decimals):
 
 ```powershell
-parqueter csv huvudbok.csv huvudbok.parquet --delimiter 0x1F --quote none --row-delimiter crlf --culture sv-SE
-parqueter inspect huvudbok.parquet --rows 0 --stats
+parqueter csv ledger.csv ledger.parquet --delimiter 0x1F --quote none --row-delimiter crlf --culture sv-SE
+parqueter inspect ledger.parquet --rows 0 --stats
 ```
 
 Without `--schema` the types are inferred from the whole file. Review what was decided with
@@ -175,6 +175,38 @@ Test it with `tests/Test-Module.ps1 -Exe .\publish\parqueter.exe` (it uses a `Da
 * Values with leading zeros (`01234`) or a leading `+` are kept as strings: they are identifiers, not numbers.
 * Dates are ISO 8601 only (`2026-01-15`, `2026-01-15T10:30:00`, with or without `Z` or an offset). A timestamp with an offset is converted to UTC; one without is kept as written. Timestamps are stored as Parquet `TIMESTAMP` with microsecond precision and not adjusted to UTC (Snowflake reads that as `TIMESTAMP_NTZ`).
 * A value that does not fit the schema stops the run with the line and column. Nothing is silently rounded or nulled, and no half-written file is left behind.
+
+## Loading the files into Snowflake
+
+Tested with a file of 458,862 rows and 28 columns (national letters in some column names, decimals, a timestamp).
+
+1. **Upload** the file to a stage (Snowsight: Data, Add Data, Load files into a stage; or `PUT`).
+2. **Use a file format with `USE_LOGICAL_TYPE = TRUE`.** Without it Snowflake reads a Parquet timestamp as a plain
+   `NUMBER` (microseconds since 1970) instead of `TIMESTAMP_NTZ`. Decimals (`NUMBER(p,s)`), integers, text, dates
+   and booleans need no option.
+3. **Create the table from the file** and load it, matching columns by name:
+
+```sql
+CREATE FILE FORMAT IF NOT EXISTS pq_logical TYPE = PARQUET USE_LOGICAL_TYPE = TRUE;
+
+CREATE TABLE ledger USING TEMPLATE (
+  SELECT ARRAY_AGG(OBJECT_CONSTRUCT(*))
+  FROM TABLE(INFER_SCHEMA(LOCATION => '@mystage/ledger.parquet', FILE_FORMAT => 'pq_logical')));
+
+COPY INTO ledger FROM @mystage/ledger.parquet
+  FILE_FORMAT = (FORMAT_NAME = 'pq_logical') MATCH_BY_COLUMN_NAME = CASE_SENSITIVE;
+```
+
+`USING TEMPLATE` worked in a Snowsight workspace but failed through the SQL REST API (cause unknown). There the column
+list can be generated instead and pasted into `CREATE TABLE ledger ( ... )`:
+`SELECT GENERATE_COLUMN_DESCRIPTION(ARRAY_AGG(OBJECT_CONSTRUCT(*)), 'table') FROM TABLE(INFER_SCHEMA(...))`.
+Required columns in the Parquet file become `NOT NULL`. Check the load with `parqueter inspect --stats` against
+`SELECT COUNT(*), SUM(...), MIN(...), MAX(...)` on the table.
+
+**Column names.** Quoting is Snowflake SQL, not Parquet. A name such as `ÅR` is stored as is and loads fine, but it is
+a quoted identifier in Snowflake and must be written `"ÅR"` in every query. The Snowsight *Load Data into Table*
+dialog refuses such names unless you type them with quotes, makes every column nullable whatever the file says, and
+does not know `USE_LOGICAL_TYPE` by default; the SQL above avoids all three. For plain names use `--ascii-names`.
 
 ## Build and test
 
