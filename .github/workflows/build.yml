@@ -1,0 +1,76 @@
+name: build
+
+# Every push and pull request builds the exe and runs the tests in Windows PowerShell 5.1.
+# Pushing a tag such as v0.1.0 also publishes a GitHub release with the exe, the module, a zip and checksums.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create a release; the token of a pull request from a fork stays read-only
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Work out the version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') { $version = $env:GITHUB_REF_NAME.Substring(1) } else { $version = '' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "Version: '$version'"
+
+      - name: Publish the single-file exe
+        shell: pwsh
+        run: ./publish.ps1 -Version '${{ steps.version.outputs.version }}'
+
+      - name: Test the exe and the module in Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $exe = Join-Path $PWD 'publish\parqueter.exe'
+          $PSVersionTable.PSVersion.ToString()
+          & $exe --version
+          foreach ($test in 'Test-Csv', 'Test-Jsonl', 'Test-Module') {
+              & ".\tests\$test.ps1" -Exe $exe
+              if ($LASTEXITCODE -ne 0) { throw "$test failed" }
+          }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          if (-not $version) { $version = 'dev' }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item publish/parqueter.exe, powershell/Parqueter.psm1 dist/
+          Compress-Archive -Path publish/parqueter.exe, powershell/Parqueter.psm1, README.md, LICENSE -DestinationPath "dist/parqueter-$version-win-x64.zip"
+          Get-ChildItem dist -File | Where-Object Name -ne 'SHA256SUMS.txt' | ForEach-Object {
+              '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+          Get-Content dist/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parqueter-win-x64
+          path: dist/*
+
+      - name: Create the release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $files = (Get-ChildItem dist -File).FullName
+          $flags = @()
+          if ($tag -like '*-*') { $flags += '--prerelease' }
+          gh release create $tag @files --title "parqueter $tag" --generate-notes @flags
