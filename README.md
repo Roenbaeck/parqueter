@@ -423,7 +423,20 @@ or .NET versions.
   Microsoft's own host and runtime packs, which come from nuget.org as usual and are not part of this risk.
 * The licenses of all built-in libraries are in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which is also in the release zip.
 * Only `ParquetOut.cs` and `ParquetInspect.cs` use the library; the CSV reading, the schemas and the PowerShell module do
-  not. Replacing it later with another Parquet library is therefore a contained change.
+  not. Replacing it later with another Parquet library would therefore be a contained change.
+* **Decision: stay on Parquet.Net 6.1.0.** [ParquetSharp](https://github.com/G-Research/ParquetSharp) was tried as a replacement and
+  passed all the tests, but it needs a 15 MB native library (built on Apache Arrow), which makes the exe about 16 MB instead of
+  1.7 MB and unpacks a DLL on first run. It was not adopted.
+* **Why a fork of the source is kept:** the author retired Parquet.Net, made its GitHub repository private and took the source
+  download offline, so the source can no longer be fetched from its original home. Every file parqueter writes goes through this
+  library, so we keep a copy of the exact source that can be verified, built and, if necessary, fixed by us. It costs nothing while
+  the library works. It matters only if a real bug turns up (or a future .NET version breaks the library): the fix can then be made
+  and built from this fork instead of waiting for an upstream that no longer exists.
+* **The fork:** [Roenbaeck/parquet-dotnet](https://github.com/Roenbaeck/parquet-dotnet). Its tag `6.1.0` is the commit the 6.1.0
+  package was built from (`c179d97bd2549b5f44a9241e729f869d4947ee59`, recorded in the package metadata), and its branch
+  `upstream-final` is the original author's last code commit (`6cdd7de0ff93d1af6819b16d7a7f3c61063df28e`, 2026-08-25, nine commits
+  newer; the same hash is found in independent public forks, so the source can be verified). A fix would be built from that source
+  and used in parqueter through a project reference, without publishing a package under the Parquet.Net name.
 
 ## Build and test
 
