@@ -435,8 +435,9 @@ or .NET versions.
 * **The fork:** [Roenbaeck/parquet-dotnet](https://github.com/Roenbaeck/parquet-dotnet). Its tag `6.1.0` is the commit the 6.1.0
   package was built from (`c179d97bd2549b5f44a9241e729f869d4947ee59`, recorded in the package metadata), and its branch
   `upstream-final` is the original author's last code commit (`6cdd7de0ff93d1af6819b16d7a7f3c61063df28e`, 2026-08-25, nine commits
-  newer; the same hash is found in independent public forks, so the source can be verified). A fix would be built from that source
-  and used in parqueter through a project reference, without publishing a package under the Parquet.Net name.
+  newer; the same hash is found in independent public forks, so the source can be verified). The default branch, `parqueter-fork`,
+  is `upstream-final` plus one commit that adds a README explaining the fork; the author's files are otherwise unchanged. A fix would
+  be built from that source and used in parqueter through a project reference, without publishing a package under the Parquet.Net name.
 
 ## Build and test
 
