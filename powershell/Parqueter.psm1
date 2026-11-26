@@ -31,7 +31,7 @@ namespace Parqueter
 {
     public static class JsonLinesWriter
     {
-        const int KString = 1, KBool = 2, KInt = 3, KDecimal = 4, KDouble = 5, KDateTime = 6, KDate = 7, KGuid = 8;
+        const int KString = 1, KBool = 2, KInt = 3, KDecimal = 4, KDouble = 5, KDateTime = 6, KDate = 7, KGuid = 8, KTime = 9;
 
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
@@ -46,6 +46,7 @@ namespace Parqueter
                 case "double": return KDouble;
                 case "dateTime": return KDateTime;
                 case "date": return KDate;
+                case "time": return KTime;
                 case "guid": return KGuid;
                 default: throw new ArgumentException("Unknown parqueter type '" + parqueterType + "'");
             }
@@ -164,6 +165,19 @@ namespace Parqueter
                     else WriteString(w, Convert.ToString(v, Inv));
                     break;
 
+                case KTime:
+                    if (v is TimeSpan || v is DateTime)
+                    {
+                        TimeSpan t = v is TimeSpan ? (TimeSpan)v : ((DateTime)v).TimeOfDay;
+                        if (t < TimeSpan.Zero || t >= TimeSpan.FromDays(1))
+                            throw new InvalidDataException("a time of day must be at least 00:00:00 and less than 24 hours, not " + t.ToString());
+                        w.Write('"');
+                        w.Write(t.ToString("hh\\:mm\\:ss\\.fffffff", Inv));
+                        w.Write('"');
+                    }
+                    else WriteString(w, Convert.ToString(v, Inv));
+                    break;
+
                 case KGuid:
                     w.Write('"');
                     w.Write(v is Guid ? ((Guid)v).ToString("D") : Convert.ToString(v, Inv));
@@ -210,7 +224,7 @@ if (-not ('Parqueter.JsonLinesWriter' -as [type])) {
     Add-Type -TypeDefinition $script:HelperSource -ReferencedAssemblies 'System.Data' -Language CSharp
 }
 
-$script:ValidTypes = @('string', 'bool', 'int32', 'int64', 'decimal', 'double', 'dateTime', 'date', 'guid')
+$script:ValidTypes = @('string', 'bool', 'int32', 'int64', 'decimal', 'double', 'dateTime', 'date', 'time', 'guid')
 
 # --- schema ------------------------------------------------------------------
 
@@ -224,7 +238,7 @@ function New-ParqueterColumn {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [string] $Name,
-        [Parameter(Mandatory)] [ValidateSet('string', 'bool', 'int32', 'int64', 'decimal', 'double', 'dateTime', 'date', 'guid')] [string] $Type,
+        [Parameter(Mandatory)] [ValidateSet('string', 'bool', 'int32', 'int64', 'decimal', 'double', 'dateTime', 'date', 'time', 'guid')] [string] $Type,
         [switch] $NotNull,
         [int] $Precision = 38,
         [int] $Scale = 0
@@ -255,7 +269,12 @@ function Get-ParqueterColumnFromSchemaRow {
     switch ($clr.FullName) {
         'System.String'         { $type = 'string' }
         'System.Char'           { $type = 'string' }
-        'System.TimeSpan'       { $type = 'string' }
+        'System.TimeSpan' {
+            # A SQL Server time column arrives as a TimeSpan and is a time of day. Other providers also use a TimeSpan
+            # for durations (an Oracle INTERVAL, for instance), which can be longer than a day or negative: those stay text.
+            $type = 'string'
+            if ($Table.Columns.Contains('DataTypeName') -and ([string]$Row['DataTypeName']) -eq 'time') { $type = 'time' }
+        }
         'System.Boolean'        { $type = 'bool' }
         'System.Byte'           { $type = 'int32' }
         'System.SByte'          { $type = 'int32' }

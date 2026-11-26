@@ -74,6 +74,22 @@ $r = Invoke-Parqueter jsonl $file $out3
 Assert-True ($r.ExitCode -eq 0) 'jsonl from a file exits with 0'
 Assert-Match (Invoke-Parqueter inspect $out3).Text 'rows: 3' 'same three rows'
 
+# --- 3b. Times of day ---------------------------------------------------------
+Write-Host 'Times of day'
+$timeSchema = '{"columns":[{"name":"T","type":"time","nullable":true}]}'
+$timeOut = Join-Path $work 'time.parquet'
+$r = Invoke-ParqueterWithInput @($timeSchema, '["07:30:00"]', '["23:59:59.9999999"]', '[null]', '["12:34"]') @('jsonl', '-', $timeOut)
+Assert-True ($r.ExitCode -eq 0) 'times of day as strings convert'
+if ($r.ExitCode -ne 0) { Write-Host $r.Text }
+$i = Invoke-Parqueter inspect $timeOut --rows 4
+Assert-Match $i.Text '(?m)^\s+T\s+time\(micros\)\s+optional' 'the column is a nullable time'
+Assert-Match $i.Text '(?m)^\s+07:30:00$' 'a time is stored and read back'
+Assert-Match $i.Text '(?m)^\s+23:59:59\.999999$' 'a fraction finer than a microsecond is cut to microseconds'
+Assert-Match $i.Text '(?m)^\s+12:34:00$' 'and so is HH:mm'
+$r = Invoke-ParqueterWithInput @($timeSchema, '["24:00:00"]') @('jsonl', '-', (Join-Path $work 'time-bad.parquet'))
+Assert-True ($r.ExitCode -ne 0) '24:00:00 is refused as a time of day'
+Assert-Match $r.Text "line 2, column 'T'.*time of day" 'with the line and column'
+
 # --- 4. Errors are loud ------------------------------------------------------
 Write-Host 'Bad input'
 $bad = Join-Path $work 'bad.parquet'

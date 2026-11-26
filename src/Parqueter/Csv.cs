@@ -303,7 +303,7 @@ public static class CsvTable
     sealed class Probe
     {
         bool _any, _sawEmpty, _sawToken;
-        bool _bool = true, _int32 = true, _int64 = true, _decimal = true, _date = true, _dateTime = true, _guid = true;
+        bool _bool = true, _int32 = true, _int64 = true, _decimal = true, _date = true, _dateTime = true, _time = true, _guid = true;
         int _maxScale, _maxIntegerDigits;
 
         public void Add(string text, ParseOptions o)
@@ -338,6 +338,7 @@ public static class CsvTable
 
             if (_date && !Values.TryParseIsoDate(text, out _)) _date = false;
             if (_dateTime && !Values.TryParseIsoDateTime(text, out _)) _dateTime = false;
+            if (_time && !Values.TryParseIsoTime(text, out _)) _time = false;
             if (_guid && !Values.TryParseGuid(text, out _)) _guid = false;
         }
 
@@ -359,6 +360,7 @@ public static class CsvTable
             else if (_decimal && _maxIntegerDigits + _maxScale <= 38) { type = ColumnType.Decimal; precision = 38; scale = _maxScale; }
             else if (_date) type = ColumnType.Date;
             else if (_dateTime) type = ColumnType.DateTime;
+            else if (_time) type = ColumnType.Time;
             else if (_guid) type = ColumnType.Guid;
             else type = ColumnType.String;
 

@@ -158,6 +158,9 @@ parqueter csv ledger.csv ledger.parquet --ascii-names --write-schema ledger.sche
 * Values with leading zeros (`01234`) or a leading `+` stay strings: they are identifiers, not numbers.
 * Dates are ISO 8601 only (`2026-01-15` becomes `date`, `2026-01-15T10:30:00` or `2026-01-15 10:30:00` `dateTime`, with or without `Z` or an offset).
   A timestamp with an offset is converted to UTC; one without is kept as written. For other formats use a schema file with `"format"`.
+* A time of day (`07:30`, `07:30:00`, `23:59:59.999999`, at least 00:00 and **less than 24 hours**) becomes `time`. A column with
+  longer values such as `36:00:00` or `24:00:00` is a duration, not a time of day, and stays a string. If a time-like column
+  should be text after all (or the other way round), change its `type` in the schema file written by `--write-schema`.
 * Whatever else is found is `string`. Nullability is what *this file* shows, which is why you review the schema before reusing it.
 * A value that does not fit the schema stops the run with the line and column. Nothing is silently rounded or nulled.
 
@@ -180,11 +183,14 @@ Quoting of *column names* is a different matter: it is Snowflake SQL, not Parque
 }
 ```
 
-* Types: `string`, `bool`, `int32`, `int64`, `decimal`, `double`, `dateTime`, `date`, `guid`. `nullable` defaults to true.
+* Types: `string`, `bool`, `int32`, `int64`, `decimal`, `double`, `dateTime`, `date`, `time`, `guid`. `nullable` defaults to true.
 * `precision` (default 38) and `scale` (default 0) are for decimals; a value with more decimals than `scale` is an error.
-* `format` (dates and timestamps only) is an exact .NET format such as `dd/MM/yyyy` or `yyyyMMdd HH:mm`.
+* `format` (dates, timestamps and times only) is an exact .NET format such as `dd/MM/yyyy` or `yyyyMMdd HH:mm`; for a time it is a
+  .NET time span format such as `hhmm` (so `0730` is 07:30:00).
 * `source` is the column's name in the CSV header, when it differs from `name`. Edit `name` to rename a column.
-* Timestamps are written as Parquet `TIMESTAMP` with microsecond precision, **not adjusted to UTC** (Snowflake reads that as `TIMESTAMP_NTZ`, see [Snowflake](#loading-the-files-into-snowflake)).
+* Timestamps are written as Parquet `TIMESTAMP` with microsecond precision, **not adjusted to UTC**, and times of day as Parquet `TIME`
+  with microsecond precision (anything finer is cut). Snowflake reads them as `TIMESTAMP_NTZ` and `TIME` when the file format has
+  `USE_LOGICAL_TYPE = TRUE`, see [Snowflake](#loading-the-files-into-snowflake).
 
 ## JSON Lines
 
@@ -219,12 +225,20 @@ is silently ignored. (The PowerShell module does this for you.)
 ## Inspect a Parquet file
 
 ```
-parqueter inspect <file.parquet> [--rows N] [--stats]
+parqueter inspect <file.parquet> [--rows N] [--stats] [--raw]
 ```
 
 Shows the schema with `required`/`optional` (the nullability that is really stored), the first N rows (default 10, `0` for none)
 and, with `--stats`, the null count, minimum, maximum and sum of every column. Statistics are read one row group at a time, so
-they work on files far larger than memory. Use them to check a conversion against the source:
+they work on files far larger than memory. With `--raw` it also shows how each column is annotated in the file (physical type,
+converted type and logical type), which is what other readers such as Snowflake look at:
+
+```
+  Created          physical=INT64  converted=-  logical=TIMESTAMP(adjustedToUtc=false, MICROS)
+  Start            physical=INT64  converted=-  logical=TIME(adjustedToUtc=false, MICROS)
+```
+
+Use the statistics to check a conversion against the source:
 
 ```powershell
 parqueter inspect orders.parquet --rows 0 --stats
@@ -335,7 +349,9 @@ to avoid that, call `Export-ParqueterObjects` on a pipeline that produces the ob
 
 ### Type mapping and limits
 
-Strings, characters and `TimeSpan` become `string`; `Byte`, `Int16`, `Int32` become `int32`; `Int64`, `UInt32` `int64`; `UInt64` `decimal(20,0)`;
+Strings and characters become `string`; a `TimeSpan` becomes `time` when the provider says the column is a time (a SQL Server `time`
+column) and `string` otherwise, because a `TimeSpan` can also be a duration (an Oracle `INTERVAL`) that may be longer than a day
+or negative, which a time of day cannot be; pass `-ColumnOverride @{ Col = @{ Type = 'time' } }` to force it. `Byte`, `Int16`, `Int32` become `int32`; `Int64`, `UInt32` `int64`; `UInt64` `decimal(20,0)`;
 `Single`, `Double` `double`; `DateTime` and `DateTimeOffset` `dateTime` (an offset is converted to UTC; a SQL Server `date` column becomes `date`);
 `Guid` `guid`; `Decimal` `decimal(precision, scale)` from the reader. Binary columns are refused: convert them in the query.
 
@@ -350,12 +366,14 @@ exactly. Speed depends on the machine and the network; memory does not grow with
 
 ## Loading the files into Snowflake
 
-Tested with a file of 458,862 rows and 28 columns (national letters in some column names, decimals, a timestamp).
+Tested with a file of 458,862 rows and 28 columns (national letters in some column names, decimals, a timestamp), and with
+synthetic files for timestamps and times of day (1900, 1969, year 9999, microseconds).
 
 1. **Upload** the file to a stage (Snowsight: Data, Add Data, Load files into a stage; or `PUT`).
-2. **Use a file format with `USE_LOGICAL_TYPE = TRUE`.** Without it Snowflake reads a Parquet timestamp as a plain
-   `NUMBER` (microseconds since 1970) instead of `TIMESTAMP_NTZ`. Decimals (`NUMBER(p,s)`), integers, text, dates
-   and booleans need no option.
+2. **Use a file format with `USE_LOGICAL_TYPE = TRUE`.** parqueter marks timestamps and times of day with Parquet's modern
+   logical types, and that option is what makes Snowflake read them: a `dateTime` column becomes `TIMESTAMP_NTZ` and a `time`
+   column becomes `TIME`, both exact to the microsecond. **Without the option Snowflake loads both as a plain `NUMBER`**
+   (microseconds since 1970, or since midnight). Decimals (`NUMBER(p,s)`), integers, text, dates and booleans need no option.
 3. **Create the table from the file** and load it, matching columns by name:
 
 ```sql
@@ -376,6 +394,12 @@ into `CREATE TABLE ledger ( ... )`:
 Required columns in the Parquet file become `NOT NULL`. Check the load with `parqueter inspect --stats` against
 `SELECT COUNT(*), SUM(...), MIN(...), MAX(...)` on the table.
 
+**Do not work around the option by changing how timestamps are stored.** Older Parquet writers store a timestamp with the legacy
+`TIMESTAMP_MICROS` marker, which Snowflake reads as `TIMESTAMP_NTZ` even with the default file format. But with
+`USE_LOGICAL_TYPE = TRUE` the same file is read as `TIMESTAMP_LTZ`, and every value is silently shifted by the session's time zone
+(tested: 10:30 became 02:30 in UTC-8). parqueter therefore writes the modern annotation only, which is correct whenever the
+option is set and visibly wrong (a number) when it is not, never quietly wrong.
+
 **Column names.** A name such as `ÅR` is stored as is and loads fine, but it is a quoted identifier in Snowflake and must be
 written `"ÅR"` in every query. The Snowsight *Load Data into Table* dialog refuses such names unless you type them with
 quotes, makes every column nullable whatever the file says, and does not know `USE_LOGICAL_TYPE` by default; the SQL above
@@ -394,13 +418,15 @@ avoids all three. For plain names use `--ascii-names` (or an alias in the query)
 | module: `Column 'X': the reader does not give a usable decimal precision and scale` | Give `-ColumnOverride @{ X = @{ Type = 'decimal'; Precision = 18; Scale = 2 } }` |
 | module: `cannot store` a binary column | Convert it in the query (for example to a hex string) |
 | module: `parqueter.exe was not found` | Pass `-ParqueterPath`, set `$env:PARQUETER_EXE`, or put the exe next to the module |
-| Snowflake shows a timestamp as a number | Use a file format with `USE_LOGICAL_TYPE = TRUE` |
+| Snowflake shows a timestamp or a time of day as a number | Use a file format with `USE_LOGICAL_TYPE = TRUE` (the Snowsight load dialog uses the default format; load with SQL as above) |
+| Snowflake shows timestamps shifted by hours | The file was not written by parqueter: a legacy timestamp read with `USE_LOGICAL_TYPE = TRUE` becomes `TIMESTAMP_LTZ` |
+| a time-like column is a `time` but should be text (or the other way round) | Change its `type` in the schema file (`--write-schema`, edit, `--schema`) |
 | Snowflake load dialog: "Contains invalid characters. Consider enclosing in double quotes" | National letters in a column name: type the name in quotes, load with SQL as above, or use `--ascii-names` |
 
 ## Limits
 
 * Parquet only, one table (one flat set of columns) per file. No nested types and no binary columns.
-* No time-of-day type yet: a value such as `07:30:00` is a `string`.
+* A time of day is at least 00:00:00 and less than 24 hours, with microsecond precision. Durations (36 hours, negative) are not times.
 * Timestamps have no time zone (an input offset is converted to UTC and the zone dropped).
 * CSV dates are ISO 8601 unless the schema gives a `format`.
 * Windows x64 and the .NET 8 runtime for the exe; Windows PowerShell 5.1 for the module (not tested in PowerShell 7).

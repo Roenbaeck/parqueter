@@ -13,7 +13,7 @@ sealed class CliException(string message, int exitCode = 1) : Exception(message)
 /// <summary>--name value options (repeatable), --flag switches and positional arguments.</summary>
 sealed class Args
 {
-    static readonly HashSet<string> Flags = new() { "no-header", "keep-empty-strings", "force", "help", "stats", "ascii-names" };
+    static readonly HashSet<string> Flags = new() { "no-header", "keep-empty-strings", "force", "help", "stats", "ascii-names", "raw" };
 
     readonly Dictionary<string, List<string>> _options = new();
     readonly HashSet<string> _flags = new();
@@ -57,11 +57,12 @@ static class Cli
         Usage:
           parqueter csv <input.csv> <output.parquet> [options]
           parqueter jsonl <input.jsonl | -> <output.parquet> [options]
-          parqueter inspect <file.parquet> [--rows N] [--stats]
+          parqueter inspect <file.parquet> [--rows N] [--stats] [--raw]
           parqueter --version
 
         inspect shows the schema (with required/optional), the first N rows (default 10, 0 for none) and,
         with --stats, the null count, minimum, maximum and sum of every column, read one row group at a time.
+        With --raw it also shows how each column is annotated in the file (physical, converted and logical type).
 
         csv options:
           --schema <file>          Use this schema (JSON) instead of inferring one.
@@ -88,7 +89,7 @@ static class Cli
           Every other line is a row: a JSON array in column order, or an object keyed by column name.
           --schema <file>, --write-schema <file>, --encoding <name>, --row-group-size <n>, --force
 
-        Types in a schema file: string, bool, int32, int64, decimal, double, dateTime, date, guid.
+        Types in a schema file: string, bool, int32, int64, decimal, double, dateTime, date, time, guid.
         """;
 
     public static async Task<int> RunAsync(string[] argv)
@@ -116,10 +117,10 @@ static class Cli
 
     static async Task<int> InspectAsync(Args a)
     {
-        a.AllowOnly("rows", "stats");
-        if (a.Positional.Count != 1) throw new CliException("Usage: parqueter inspect <file.parquet> [--rows N] [--stats]", 2);
+        a.AllowOnly("rows", "stats", "raw");
+        if (a.Positional.Count != 1) throw new CliException("Usage: parqueter inspect <file.parquet> [--rows N] [--stats] [--raw]", 2);
         var rows = a.Get("rows") is { } r ? ParseInt(r, "--rows") : 10;
-        await ParquetInspect.RunAsync(a.Positional[0], rows, a.Has("stats"), Console.Out);
+        await ParquetInspect.RunAsync(a.Positional[0], rows, a.Has("stats"), a.Has("raw"), Console.Out);
         return 0;
     }
 
