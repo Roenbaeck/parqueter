@@ -191,6 +191,49 @@ $r = Invoke-Parqueter csv $dup (Join-Path $work 'ascii-dup.parquet') --delimiter
 Assert-True ($r.ExitCode -ne 0) 'two columns that become the same name are an error'
 Assert-Match $r.Text 'both become' 'the error says which names collide'
 
+Write-Host 'Times of day'
+$tm = Join-Path $work 'times.csv'
+[IO.File]::WriteAllText($tm, "Id,Start,Duration,Bad,Note`n1,07:30:00,01:30:00,24:00:00,a`n2,23:59:59.999999,36:00:00,07:30:00,b`n3,,10:00,07:30:00,c`n4,12:34,00:00:01,07:30:00,d`n", (New-Object Text.UTF8Encoding $false))
+$tmOut = Join-Path $work 'times.parquet'
+$r = Invoke-Parqueter csv $tm $tmOut
+Assert-True ($r.ExitCode -eq 0) 'a file with times of day converts'
+if ($r.ExitCode -ne 0) { Write-Host $r.Text }
+$i = Invoke-Parqueter inspect $tmOut --stats
+Assert-Match $i.Text '(?m)^\s+Start\s+time\(micros\)\s+optional' 'HH:mm:ss values become a nullable time column'
+Assert-Match $i.Text '(?m)^\s+Duration\s+string\s+required' 'a column that holds 36:00:00 is a duration, so it stays a string'
+Assert-Match $i.Text '(?m)^\s+Bad\s+string\s+required' '24:00:00 is not a time of day, so that column stays a string'
+Assert-Match $i.Text '(?m)^\s+Start\s+nulls=1 min=07:30:00 max=23:59:59\.999999$' 'time statistics: one null, minimum and maximum'
+Assert-Match $i.Text '(?m)^\s+1 \| 07:30:00 \| ' 'a whole-second time prints without a fraction'
+Assert-Match $i.Text '(?m)^\s+4 \| 12:34:00 \| ' 'HH:mm is accepted and means seconds are zero'
+# How the file is annotated is what Snowflake (with USE_LOGICAL_TYPE = TRUE) and other readers look at.
+$raw = Invoke-Parqueter inspect $tmOut --raw --rows 0
+Assert-Match $raw.Text '(?m)^\s+Start\s+physical=INT64\s+converted=-\s+logical=TIME\(adjustedToUtc=false, MICROS\)$' 'a time is INT64 microseconds with the TIME logical type, not adjusted to UTC'
+$rawTs = Invoke-Parqueter inspect $out --raw --rows 0
+Assert-Match $rawTs.Text '(?m)^\s+Created\s+physical=INT64\s+converted=-\s+logical=TIMESTAMP\(adjustedToUtc=false, MICROS\)$' 'a timestamp is INT64 microseconds with the TIMESTAMP logical type, not adjusted to UTC'
+# The inference can be overridden in the schema when a time-like column should be text after all.
+$tmSchemaFile = Join-Path $work 'times-inferred.json'
+$r = Invoke-Parqueter csv $tm (Join-Path $work 'times-inferred.parquet') --write-schema $tmSchemaFile
+$edit = Get-Content $tmSchemaFile -Raw | ConvertFrom-Json
+$edit.columns | Where-Object name -eq 'Start' | ForEach-Object { $_.type = 'string' }
+$edit | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $work 'times-as-text.json') -Encoding utf8
+$r = Invoke-Parqueter csv $tm (Join-Path $work 'times-as-text.parquet') --schema (Join-Path $work 'times-as-text.json')
+Assert-True ($r.ExitCode -eq 0) 'a schema that says string for a time-like column converts'
+$i = Invoke-Parqueter inspect (Join-Path $work 'times-as-text.parquet') --rows 4
+Assert-Match $i.Text '(?m)^\s+Start\s+string\s+optional' 'and the column is text'
+Assert-Match $i.Text '(?m)^\s+1 \| 07:30:00 \| ' 'with the values exactly as they were written'
+Assert-Match $i.Text '(?m)^\s+4 \| 12:34 \| ' 'including 12:34, which is not padded to 12:34:00 any more'
+$tmSchema = Join-Path $work 'times-schema.json'
+'{"columns":[{"name":"T","type":"time","format":"hhmm"}]}' | Set-Content $tmSchema -Encoding ascii
+[IO.File]::WriteAllText((Join-Path $work 'times-format.csv'), "T`n0730`n2359`n", (New-Object Text.UTF8Encoding $false))
+$r = Invoke-Parqueter csv (Join-Path $work 'times-format.csv') (Join-Path $work 'times-format.parquet') --schema $tmSchema
+Assert-True ($r.ExitCode -eq 0) 'a time with an explicit format (hhmm) converts'
+Assert-Match (Invoke-Parqueter inspect (Join-Path $work 'times-format.parquet')).Text '(?m)^\s+23:59:00$' 'and 2359 is 23:59:00'
+$badTime = Join-Path $work 'times-bad.csv'
+[IO.File]::WriteAllText($badTime, "T`n07:30:00`n25:00:00`n", (New-Object Text.UTF8Encoding $false))
+$r = Invoke-Parqueter csv $badTime (Join-Path $work 'times-bad.parquet') --schema (Join-Path $work 'times-schema-iso.json' | ForEach-Object { '{"columns":[{"name":"T","type":"time"}]}' | Set-Content $_ -Encoding ascii; $_ })
+Assert-True ($r.ExitCode -ne 0) 'a value that is not a time of day fails when the schema says time'
+Assert-Match $r.Text "line 3, column 'T'.*time of day" 'and the error says what was expected'
+
 Write-Host 'No header'
 $nh = Join-Path $work 'noheader.csv'
 [IO.File]::WriteAllText($nh, "FC1;X1;2026;10;5.00000000`nFC1;X2;2026;11;6.50000000`n", (New-Object Text.UTF8Encoding $true))

@@ -95,6 +95,32 @@ Assert-Match $i.Text ('(?m)^\s+A-1 \| 10\.5(0*) \| 2026-03-01 12:00:00 \| Bj{0}r
 Assert-Match $i.Text '(?m)^\s+A-2 \| 7(\.0*)? \| 2026-03-02 08:15:00 \| NULL$' 'a hashtable works, a Z timestamp is read, a missing property is null'
 Assert-Match $i.Text '(?m)^\s+A-3 \| NULL \| NULL \| NULL$' 'an object with only a key is mostly null'
 
+# --- 2b. Times of day ---------------------------------------------------------
+Write-Host 'Times of day'
+$times = New-Object System.Data.DataTable
+$null = $times.Columns.Add('T', [timespan])
+$null = $times.Rows.Add([timespan]'07:30:00'); $null = $times.Rows.Add([timespan]::Parse('23:59:59.9999999')); $null = $times.Rows.Add([DBNull]::Value)
+$schemaOf = Get-ParqueterSchema -Reader $times.CreateDataReader()
+Assert-True ($schemaOf[0].Type -eq 'string') 'a TimeSpan is text unless the provider says it is a time column (it can be a duration)'
+$timeOut = Join-Path $work 'time.parquet'
+$null = Export-ParqueterFromReader -Reader $times.CreateDataReader() -Path $timeOut -ParqueterPath $Exe -ColumnOverride @{ T = @{ Type = 'time' } }
+$i = Invoke-Parqueter inspect $timeOut --rows 3
+Assert-Match $i.Text '(?m)^\s+T\s+time\(micros\)\s+optional' 'with an override the column is a time of day'
+Assert-Match $i.Text '(?m)^\s+07:30:00$' 'a TimeSpan is written as a time'
+Assert-Match $i.Text '(?m)^\s+23:59:59\.999999$' 'with microsecond precision'
+$long = New-Object System.Data.DataTable
+$null = $long.Columns.Add('T', [timespan]); $null = $long.Rows.Add([timespan]::FromHours(36))
+$bad = Join-Path $work 'time-bad.parquet'
+$message = Get-Failure { Export-ParqueterFromReader -Reader $long.CreateDataReader() -Path $bad -ParqueterPath $Exe -ColumnOverride @{ T = @{ Type = 'time' } } }
+Assert-Match $message "column 'T'.*time of day" 'a duration of 36 hours is refused as a time of day'
+Assert-True (-not (Test-Path $bad) -and -not (Test-Path ($bad + '.tmp'))) 'and nothing is left behind'
+$objects = @([pscustomobject]@{ Start = [timespan]'08:15:00' }, @{ Start = '17:45' }, [pscustomobject]@{ })
+$out3 = Join-Path $work 'time-objects.parquet'
+$null = $objects | Export-ParqueterObjects -Schema @(New-ParqueterColumn Start time) -Path $out3 -ParqueterPath $Exe
+$i = Invoke-Parqueter inspect $out3 --rows 3
+Assert-Match $i.Text '(?m)^\s+08:15:00$' 'objects: a TimeSpan is a time'
+Assert-Match $i.Text '(?m)^\s+17:45:00$' 'objects: a string HH:mm is a time'
+
 # --- 3. Failures leave nothing behind ---------------------------------------
 Write-Host 'Failures'
 $bad = Join-Path $work 'bad.parquet'

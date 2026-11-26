@@ -46,6 +46,18 @@ public static class Values
         return o.NullTokens.Contains(text);
     }
 
+    // A time of day: hours and minutes, optional seconds, optional fraction of a second.
+    static readonly string[] IsoTimeFormats =
+    {
+        @"h\:mm", @"hh\:mm", @"h\:mm\:ss", @"hh\:mm\:ss", @"h\:mm\:ss\.FFFFFFF", @"hh\:mm\:ss\.FFFFFFF",
+    };
+
+    /// <summary>A time of day is at least 00:00:00 and less than 24:00:00 (a longer span is a duration, not a time).</summary>
+    public static bool IsTimeOfDay(TimeSpan t) => t >= TimeSpan.Zero && t < TimeSpan.FromDays(1);
+
+    public static bool TryParseIsoTime(string s, out TimeSpan value) =>
+        TimeSpan.TryParseExact(s, IsoTimeFormats, CultureInfo.InvariantCulture, TimeSpanStyles.None, out value) && IsTimeOfDay(value);
+
     public static bool TryParseIsoDate(string s, out DateOnly value) =>
         DateOnly.TryParseExact(s, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out value);
 
@@ -119,6 +131,16 @@ public static class Values
                     : DateTime.TryParseExact(s, c.Format, o.Culture, DateTimeStyles.None, out dt);
                 if (ok) return DateTime.SpecifyKind(dt, DateTimeKind.Unspecified);
                 throw Bad(s, c.Format is null ? "an ISO 8601 date and time" : $"a date and time in the format {c.Format}");
+            }
+
+            case ColumnType.Time:
+            {
+                TimeSpan t;
+                var ok = c.Format is null
+                    ? TryParseIsoTime(s, out t)
+                    : TimeSpan.TryParseExact(s, c.Format, o.Culture, TimeSpanStyles.None, out t) && IsTimeOfDay(t);
+                if (ok) return t;
+                throw Bad(s, c.Format is null ? "a time of day (HH:mm:ss or HH:mm:ss.ffffff, less than 24 hours)" : $"a time of day in the format {c.Format}");
             }
 
             case ColumnType.Guid:

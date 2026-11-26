@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace Parqueter;
 
 /// <summary>The data types parqueter understands, independent of any source or of Parquet.</summary>
-public enum ColumnType { String, Bool, Int32, Int64, Decimal, Double, DateTime, Date, Guid }
+public enum ColumnType { String, Bool, Int32, Int64, Decimal, Double, DateTime, Date, Time, Guid }
 
 public sealed class Column
 {
@@ -26,7 +26,7 @@ public sealed class Column
     /// <summary>Decimal only: digits after the decimal point (default 0).</summary>
     public int? Scale { get; init; }
 
-    /// <summary>Date and DateTime only: an exact .NET format string such as "dd/MM/yyyy". Default is ISO 8601.</summary>
+    /// <summary>Date, DateTime and Time only: an exact .NET format string such as "dd/MM/yyyy" (for a time: "hh\:mm"). Default is ISO 8601.</summary>
     public string? Format { get; init; }
 }
 

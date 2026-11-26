@@ -6,6 +6,9 @@ namespace Parqueter;
 /// <summary>Writes rows to a Parquet file with an explicit schema, so types and nullability are exactly what the schema says.</summary>
 public static class ParquetOut
 {
+    // Timestamps are stored as INT64 microseconds with the TIMESTAMP logical type, not adjusted to UTC, and times of day
+    // as INT64 microseconds since midnight with the TIME logical type. Snowflake reads both correctly (TIMESTAMP_NTZ and TIME)
+    // when the file format has USE_LOGICAL_TYPE = TRUE; see the README.
     public static async Task<long> WriteAsync(string path, TableSchema schema, IEnumerable<object?[]> rows, int rowGroupSize)
     {
         var fields = schema.Columns.Select(ToField).ToArray();
@@ -58,6 +61,7 @@ public static class ParquetOut
         ColumnType.Guid     => new DataField(c.Name, typeof(Guid), c.Nullable),
         ColumnType.Date     => new DataField(c.Name, typeof(DateOnly), c.Nullable),
         ColumnType.DateTime => new DateTimeDataField(c.Name, DateTimeFormat.Timestamp, isAdjustedToUTC: false, unit: DateTimeTimeUnit.Micros, isNullable: c.Nullable),
+        ColumnType.Time     => new TimeDataField(c.Name, TimeUnitPrecision.Micros, c.Nullable) { IsAdjustedToUtc = false },
         ColumnType.Decimal  => new DecimalDataField(c.Name, c.Precision ?? 38, c.Scale ?? 0, isNullable: c.Nullable),
         _ => throw new InvalidOperationException($"Unhandled column type {c.Type}"),
     };
@@ -74,20 +78,23 @@ public static class ParquetOut
         ColumnType.Date     => WriteStructAsync<DateOnly>(group, field, batch, index, c.Nullable),
         ColumnType.DateTime => WriteStructAsync<DateTime>(group, field, batch, index, c.Nullable),
         ColumnType.Decimal  => WriteStructAsync<decimal>(group, field, batch, index, c.Nullable),
+        // A time of day is stored as the number of microseconds since midnight (a tick is 100 nanoseconds).
+        ColumnType.Time     => WriteStructAsync<long>(group, field, batch, index, c.Nullable, v => ((TimeSpan)v).Ticks / 10),
         _ => throw new InvalidOperationException($"Unhandled column type {c.Type}"),
     };
 
-    static Task WriteStructAsync<T>(ParquetRowGroupWriter group, DataField field, List<object?[]> batch, int index, bool nullable)
+    static Task WriteStructAsync<T>(ParquetRowGroupWriter group, DataField field, List<object?[]> batch, int index, bool nullable, Func<object, T>? convert = null)
         where T : struct
     {
+        T Value(object v) => convert is null ? (T)v : convert(v);
         if (nullable)
         {
-            var values = batch.Select(r => (T?)r[index]).ToArray();
+            var values = batch.Select(r => r[index] is null ? (T?)null : Value(r[index]!)).ToArray();
             return group.WriteAsync<T>(field, new ReadOnlyMemory<T?>(values));
         }
         else
         {
-            var values = batch.Select(r => (T)r[index]!).ToArray();
+            var values = batch.Select(r => Value(r[index]!)).ToArray();
             return group.WriteAsync<T>(field, new ReadOnlyMemory<T>(values));
         }
     }
